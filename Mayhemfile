@@ -2,4 +2,4 @@ project: quick-lint-js
 target: quick-lint-js
 
 cmds:
-  - cmd: /repo/quick-lint-js @@
+  - cmd: /quick-lint-js @@
