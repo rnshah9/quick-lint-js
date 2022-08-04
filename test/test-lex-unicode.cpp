@@ -4,8 +4,8 @@
 #include <array>
 #include <cstdio>
 #include <gtest/gtest.h>
-#include <quick-lint-js/lex.h>
-#include <quick-lint-js/narrow-cast.h>
+#include <quick-lint-js/fe/lex.h>
+#include <quick-lint-js/util/narrow-cast.h>
 #include <sstream>
 #include <string>
 #include <unicode/uchar.h>

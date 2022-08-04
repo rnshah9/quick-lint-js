@@ -32,8 +32,14 @@ This command has two modes:
 
 *quick-lint-js* --lsp-server::
   LSP server mode.
-  Start a Language Server Protocol server, communicating using standard input and standard output.
   Use this mode to integrate with code editors supporting LSP.
+  For more information, see
+ifdef::backend-html5[]
+  the link:../docs/lsp/[LSP server documentation].
+endif::[]
+ifndef::backend-html5[]
+  *quick-lint-js-lsp*(8).
+endif::[]
 
 == Options
 
@@ -71,10 +77,10 @@ Therefore, if multiple input files are given, *--vim-file-bufnr* can be specifie
 *--path-for-config-search*=_path_::
   For the following input file or *--stdin*, use _path_ as the file's path when
 ifdef::backend-manpage[]
-searching for a configuration file (see *quick-lint-js.config*(5)).
+  searching for a configuration file (see *quick-lint-js.config*(5)).
 endif::[]
 ifdef::backend-html5[]
-link:../config/[searching for a configuration file].
+  link:../config/[searching for a configuration file].
 endif::[]
 +
 _path_ must be a syntactically-valid path.
@@ -135,7 +141,13 @@ Incompatible with *--lsp-server*.
 *--lsp-server*::
   Run *quick-lint-js* in LSP server mode.
   Use this mode to integrate with code editors supporting LSP.
-  An editor can send LSP requests and notifications to *quick-lint-js* via standard input, and receive LSP responses and notifications from standard output.
+  For more information, see
+ifdef::backend-html5[]
+  the link:../docs/lsp/[LSP server documentation].
+endif::[]
+ifndef::backend-html5[]
+  *quick-lint-js-lsp*(8).
+endif::[]
 +
 Incompatible with *--output-format*.
 
@@ -285,7 +297,7 @@ ifdef::backend-manpage[]
 == See also
 
 *eslint*(1)
-*quick-lint-js.config*(1)
+*quick-lint-js.config*(5)
 
 endif::backend-manpage[]
 

@@ -3,19 +3,19 @@
 
 #include <cstring>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/emacs-lisp-diag-reporter.h>
-#include <quick-lint-js/emacs-location.h>
-#include <quick-lint-js/location.h>
-#include <quick-lint-js/output-stream.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/cli/emacs-lisp-diag-reporter.h>
+#include <quick-lint-js/cli/emacs-location.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/fe/source-code-span.h>
+#include <quick-lint-js/io/output-stream.h>
+#include <quick-lint-js/port/char8.h>
 
 namespace quick_lint_js {
 namespace {
 class test_emacs_lisp_diag_reporter : public ::testing::Test {
  protected:
   emacs_lisp_diag_reporter make_reporter(padded_string_view input) {
-    emacs_lisp_diag_reporter reporter(&this->stream_);
+    emacs_lisp_diag_reporter reporter(translator(), &this->stream_);
     reporter.set_source(input);
     return reporter;
   }

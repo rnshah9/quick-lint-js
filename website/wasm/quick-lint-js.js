@@ -72,36 +72,45 @@ class ProcessFactory {
       throw LONG_JUMP_TOKEN;
     }
 
+    function invoke(functionIndex, ...args) {
+      // Accessing __indirect_function_table can be slow (a few
+      // microseconds). Cache the result. At the time of writing, we expect
+      // only one functionIndex to be used over and over for the web demo.
+      let func;
+      if (functionIndex === cachedIndirectFunctionIndex) {
+        func = cachedIndirectFunction;
+      } else {
+        func =
+          wasmInstance.exports.__indirect_function_table.get(functionIndex);
+        cachedIndirectFunction = func;
+        cachedIndirectFunctionIndex = functionIndex;
+      }
+
+      let oldStackPointer = wasmInstance.exports.stackSave();
+      try {
+        return func(...args);
+      } catch (e) {
+        wasmInstance.exports.stackRestore(oldStackPointer);
+        if (e === LONG_JUMP_TOKEN) {
+          let env = 1; // TODO(strager): Why this particular value?
+          wasmInstance.exports.setThrew(env, /*value=*/ 0);
+          return 0; // FIXME(strager): What should we return for invoke_ii?
+        } else {
+          throw e;
+        }
+      }
+    }
+
     let wasmInstance = await WebAssembly.instantiate(this._wasmModule, {
       env: {
         // Called by setjmp.
-        invoke_vii: (functionIndex, arg0, arg1) => {
-          // Accessing __indirect_function_table can be slow (a few
-          // microseconds). Cache the result. At the time of writing, we expect
-          // only one functionIndex to be used over and over for the web demo.
-          let func;
-          if (functionIndex === cachedIndirectFunctionIndex) {
-            func = cachedIndirectFunction;
-          } else {
-            func =
-              wasmInstance.exports.__indirect_function_table.get(functionIndex);
-            cachedIndirectFunction = func;
-            cachedIndirectFunctionIndex = functionIndex;
-          }
-
-          let oldStackPointer = wasmInstance.exports.stackSave();
-          try {
-            func(arg0, arg1);
-          } catch (e) {
-            wasmInstance.exports.stackRestore(oldStackPointer);
-            if (e === LONG_JUMP_TOKEN) {
-              let env = 1; // TODO(strager): Why this particular value?
-              wasmInstance.exports.setThrew(env, /*value=*/ 0);
-            } else {
-              throw e;
-            }
-          }
-        },
+        invoke_ii: invoke,
+        invoke_iii: invoke,
+        invoke_v: invoke,
+        invoke_vi: invoke,
+        invoke_vii: invoke,
+        invoke_viii: invoke,
+        invoke_viiii: invoke,
 
         // Called by longjmp. Different names are for different Emscripten
         // versions and configurations.
@@ -202,10 +211,15 @@ class Process {
 
     this._malloc = wrap("malloc");
     this._free = wrap("free");
+    this._listLocales = wrap("qljs_list_locales");
     this._webDemoCreateDocument = wrap("qljs_web_demo_create_document");
     this._webDemoDestroyDocument = wrap("qljs_web_demo_destroy_document");
     this._webDemoLint = wrap("qljs_web_demo_lint");
     this._webDemoLintAsConfigFile = wrap("qljs_web_demo_lint_as_config_file");
+    this._webDemoSetLanguageOptions = wrap(
+      "qljs_web_demo_set_language_options"
+    );
+    this._webDemoSetLocale = wrap("qljs_web_demo_set_locale");
     this._webDemoSetText = wrap("qljs_web_demo_set_text");
     this._webDemoSetConfigText = wrap("qljs_web_demo_set_config_text");
   }
@@ -228,9 +242,12 @@ class Process {
     // Make future calls crash and also reduce memory usage.
     this._malloc = tainted;
     this._free = tainted;
+    this._listLocales = tainted;
     this._webDemoCreateDocument = tainted;
     this._webDemoDestroyDocument = tainted;
     this._webDemoLint = tainted;
+    this._webDemoSetLanguageOptions = tainted;
+    this._webDemoSetLocale = tainted;
     this._webDemoSetText = tainted;
   }
 
@@ -241,12 +258,36 @@ class Process {
   async createDocumentForWebDemoAsync() {
     return new DocumentForWebDemo(this);
   }
+
+  listLocales() {
+    let localePointerList = new Uint32Array(this._heap, this._listLocales());
+    let locales = [];
+    for (let i = 0; localePointerList[i] != 0; ++i) {
+      locales.push(
+        decodeUTF8CString(new Uint8Array(this._heap, localePointerList[i]))
+      );
+    }
+    return locales;
+  }
 }
 
 class DocumentForWebDemo {
   constructor(process) {
     this._process = process;
     this._wasmDoc = this._process._webDemoCreateDocument();
+  }
+
+  setLanguageOptions(languageOptions) {
+    this._process._webDemoSetLanguageOptions(this._wasmDoc, languageOptions);
+  }
+
+  setLocale(locale) {
+    let utf8Locale = encodeUTF8String(locale, this._process);
+    try {
+      this._process._webDemoSetLocale(this._wasmDoc, utf8Locale.pointer);
+    } finally {
+      utf8Locale.dispose();
+    }
   }
 
   setText(text) {
@@ -351,6 +392,13 @@ let DiagnosticSeverity = {
 };
 exports.DiagnosticSeverity = DiagnosticSeverity;
 
+let LanguageOptions = {
+  JSX: 1 << 0,
+  TYPESCRIPT: 1 << 1,
+};
+exports.LanguageOptions = LanguageOptions;
+
+// Writes a null-terminated string into the process's heap.
 function encodeUTF8String(string, process) {
   let maxUTF8BytesPerUTF16CodeUnit = Math.ceil(
     Math.max(
@@ -358,16 +406,14 @@ function encodeUTF8String(string, process) {
       5 / 2 // U+10000..: 5 UTF-8 bytes, 2 UTF-16 code units
     )
   );
-  let maxSize = string.length * maxUTF8BytesPerUTF16CodeUnit;
+  let maxSize = string.length * maxUTF8BytesPerUTF16CodeUnit + 1;
   let textUTF8Pointer = process._malloc(maxSize);
   try {
     let encoder = new TextEncoder();
     let textUTF8Size;
+    let u8Array = new Uint8Array(process._heap, textUTF8Pointer, maxSize);
     if (typeof encoder.encodeInto === "function") {
-      let encodeResult = encoder.encodeInto(
-        string,
-        new Uint8Array(process._heap, textUTF8Pointer, maxSize)
-      );
+      let encodeResult = encoder.encodeInto(string, u8Array);
       if (encodeResult.read !== string.length) {
         throw new Error(
           `Assertion failure: expected encodeResult.read (${encodeResult.read}) to equal string.length (${string.length})`
@@ -376,9 +422,10 @@ function encodeUTF8String(string, process) {
       textUTF8Size = encodeResult.written;
     } else {
       let encoded = encoder.encode(string);
-      new Uint8Array(process._heap, textUTF8Pointer, maxSize).set(encoded);
+      u8Array.set(encoded);
       textUTF8Size = encoded.length;
     }
+    u8Array[textUTF8Size] = 0; // Null terminator.
     return {
       pointer: textUTF8Pointer,
       byteSize: textUTF8Size,

@@ -6,7 +6,11 @@ import assert from "assert";
 import fs from "fs";
 import path from "path";
 import url from "url";
-import { createProcessFactoryAsync } from "../wasm/quick-lint-js.js";
+import {
+  DiagnosticSeverity,
+  LanguageOptions,
+  createProcessFactoryAsync,
+} from "../wasm/quick-lint-js.js";
 import { sanitizeMarks } from "../public/demo/editor.mjs";
 
 let __filename = url.fileURLToPath(import.meta.url);
@@ -27,7 +31,7 @@ async function makeQLJSProcessAsync() {
   let process = await factory.createProcessAsync();
   return process;
 }
-let qljsProcessPromise = makeQLJSProcessAsync();
+export let qljsProcessPromise = makeQLJSProcessAsync();
 
 markdownParser.renderer.rules = {
   ...markdownParser.renderer.rules,
@@ -46,7 +50,7 @@ markdownParser.renderer.rules = {
     }
   },
 
-  code_block(tokens, tokenIndex, options, env, self) {
+  fence(tokens, tokenIndex, options, env, self) {
     let token = tokens[tokenIndex];
     if (token.info === "config-for-examples") {
       // Don't show config snippets which configure other code blocks.
@@ -64,26 +68,41 @@ markdownParser.renderer.rules = {
           : env.doc.diagnostics[env.codeBlockIndex],
     });
     env.codeBlockIndex += 1;
-    return `<figure><pre><code>${codeHTML}</code></pre></figure>`;
-  },
-
-  fence(tokens, tokenIndex, options, env, self) {
-    return this.code_block(tokens, tokenIndex, options, env, self);
+    return `<figure><pre><code class="javascript">${codeHTML}</code></pre></figure>`;
   },
 };
 
 export function errorDocumentationExampleToHTML({ code, diagnostics }) {
-  diagnostics = diagnostics === null ? [] : sanitizeMarks(diagnostics);
+  let diagPoints = diagnostics === null ? [] : flattenDiagnostics(diagnostics);
   let codeHTML = "";
-  let lastDiagnosticEnd = 0;
-  for (let diagnostic of diagnostics) {
-    codeHTML += textToHTML(code.slice(lastDiagnosticEnd, diagnostic.begin));
-    codeHTML += "<mark>";
-    codeHTML += textToHTML(code.slice(diagnostic.begin, diagnostic.end));
-    codeHTML += "</mark>";
-    lastDiagnosticEnd = diagnostic.end;
+  let lastPointOffset = 0;
+  for (let point of diagPoints) {
+    let diagnostic = point.diagnostic;
+    codeHTML += textToHTML(code.slice(lastPointOffset, point.offset));
+    if (point.type === "begin" || point.type === "point") {
+      codeHTML += "<mark";
+      if (typeof diagnostic.code !== "undefined") {
+        codeHTML += ` data-code="${textToHTML(diagnostic.code)}"`;
+      }
+      if (typeof diagnostic.message !== "undefined") {
+        codeHTML += ` data-message="${textToHTML(diagnostic.message)}"`;
+      }
+      if (typeof diagnostic.severity !== "undefined") {
+        codeHTML += ` data-severity="${
+          {
+            [DiagnosticSeverity.ERROR]: "error",
+            [DiagnosticSeverity.WARNING]: "warning",
+          }[diagnostic.severity]
+        }"`;
+      }
+      codeHTML += ">";
+    }
+    if (point.type === "end" || point.type === "point") {
+      codeHTML += "</mark>";
+    }
+    lastPointOffset = point.offset;
   }
-  codeHTML += textToHTML(code.slice(lastDiagnosticEnd));
+  codeHTML += textToHTML(code.slice(lastPointOffset));
 
   // Wrap BOM in a <span>.
   let hasBOM = code.startsWith("\ufeff");
@@ -132,14 +151,15 @@ export class ErrorDocumentation {
     this.titleErrorCode = titleErrorCode;
     this.titleErrorDescriptionHTML = titleErrorDescriptionHTML;
     this.diagnostics = null;
+    this._diagnosticsLocale = null;
   }
 
   get filePathErrorCode() {
     return path.basename(this.filePath, ".md");
   }
 
-  async findDiagnosticsAsync() {
-    if (this.diagnostics !== null) {
+  async findDiagnosticsAsync(locale = "") {
+    if (this.diagnostics !== null && this._diagnosticsLocale === locale) {
       // Already found.
       return;
     }
@@ -149,11 +169,30 @@ export class ErrorDocumentation {
     for (let i = 0; i < this.codeBlocks.length; ++i) {
       let doc = await process.createDocumentForWebDemoAsync();
       try {
+        doc.setLocale(locale);
         let { text, language } = this.codeBlocks[i];
         if (this.configForExamples !== null) {
           doc.setConfigText(this.configForExamples);
         }
         doc.setText(text);
+        switch (language) {
+          case "javascript":
+            doc.setLanguageOptions(LanguageOptions.JSX);
+            break;
+          case "typescript":
+            doc.setLanguageOptions(LanguageOptions.TYPESCRIPT);
+            break;
+          case "typescript-jsx":
+            doc.setLanguageOptions(
+              LanguageOptions.TYPESCRIPT | LanguageOptions.JSX
+            );
+            break;
+          case "quick-lint-js.config":
+            break;
+          default:
+            // TODO(strager): Warn.
+            break;
+        }
         let diagnostics =
           language === "quick-lint-js.config"
             ? doc.lintAsConfigFile()
@@ -206,7 +245,7 @@ export class ErrorDocumentation {
           break;
 
         case "code_block":
-          codeBlocks.push({ text: token.content, language: "javascript" });
+          // Ignore code blocks. Only respect code fences.
           break;
 
         case "fence":
@@ -250,6 +289,8 @@ export class ErrorDocumentation {
     });
   }
 
+  // If findDiagnosticsAsync was previously called, then the HTML will include
+  // <mark> elements for diagnostics.
   toHTML() {
     this._markdownEnv.doc = this;
     return markdownParser.renderer.render(
@@ -259,7 +300,8 @@ export class ErrorDocumentation {
     );
   }
 
-  async findProblemsAsync() {
+  // Precondition: findDiagnosticsAsync was previously called.
+  findProblems() {
     let foundProblems = [];
     if (this.titleErrorCode !== this.filePathErrorCode) {
       foundProblems.push(
@@ -270,7 +312,11 @@ export class ErrorDocumentation {
       if (this.codeBlocks.length === 0) {
         foundProblems.push(`${this.filePath}: error: missing code blocks`);
       }
-      await this.findDiagnosticsAsync();
+      if (this.diagnostics === null) {
+        throw new Error(
+          "findDiagnosticsAsync should have been called before calling findProblems"
+        );
+      }
       for (let i = 0; i < this.codeBlocks.length; ++i) {
         let diagnostics = this.diagnostics[i];
 
@@ -315,18 +361,6 @@ export class ErrorDocumentation {
   }
 }
 
-export async function reportProblemsInDocumentsAsync(documents) {
-  let foundProblems = [];
-  for (let doc of documents) {
-    foundProblems.push(...(await doc.findProblemsAsync()));
-  }
-  if (foundProblems.length !== 0) {
-    throw new ProblemsError(
-      `found problems in error documents:\n${foundProblems.join("\n")}`
-    );
-  }
-}
-
 export async function findErrorDocumentationFilesAsync(rootPath) {
   let files = await fs.promises.readdir(rootPath);
   return files.filter((fileName) => fileName.endsWith(".md"));
@@ -364,6 +398,82 @@ function wrapASCIIControlCharacters(html) {
     let cssClass = CONTROL_CHARACTER_TO_CSS_CLASS[controlCharacter];
     return `<span class='${cssClass}'>${controlCharacter}</span>`;
   });
+}
+
+export function flattenDiagnostics(diagnostics) {
+  // TODO(strager): Use an interval map instead for efficiency.
+  let diagnosticsPerCharacter = [];
+  let maxOffset = Math.max(0, ...diagnostics.map((diag) => diag.end));
+  for (let offset = 0; offset < maxOffset + 1; ++offset) {
+    diagnosticsPerCharacter.push([]);
+  }
+
+  for (let diagnostic of diagnostics) {
+    if (diagnostic.begin === diagnostic.end) {
+      diagnosticsPerCharacter[diagnostic.begin].push(diagnostic);
+    } else {
+      for (let offset = diagnostic.begin; offset < diagnostic.end; ++offset) {
+        diagnosticsPerCharacter[offset].push(diagnostic);
+      }
+    }
+  }
+
+  // Sort diags to encourage nesting and reduce splitting.
+  //
+  // If two diags begin at the same character, and one is nested within the
+  // other (as determined by their 'end' properties), order them such that the
+  // inner diagnostic (i.e. the one with the smaller 'end') appears after the
+  // outer diagnostic (i.e. the one with the bigger 'end').
+  for (let diagnosticsAtCharacter of diagnosticsPerCharacter) {
+    diagnosticsAtCharacter.sort((a, b) => {
+      if (a.end < b.end) return +1;
+      if (a.end > b.end) return -1;
+      let aIndex = diagnosticsAtCharacter.indexOf(a);
+      let bIndex = diagnosticsAtCharacter.indexOf(b);
+      if (aIndex < bIndex) return -1;
+      if (aIndex > bIndex) return +1;
+      return 0; // This shouldn't happen.
+    });
+  }
+
+  let stack = [];
+  let points = [];
+  for (let offset = 0; offset <= maxOffset; ++offset) {
+    let diagnosticsAtOffset = diagnosticsPerCharacter[offset];
+    popInvalidStackEntries(offset, diagnosticsAtOffset);
+    pushMissingDiagnostics(offset, diagnosticsAtOffset);
+  }
+  return points;
+
+  function pushMissingDiagnostics(offset, diagnosticsAtOffset) {
+    for (let d of diagnosticsAtOffset) {
+      if (d.begin === d.end) {
+        points.push({ type: "point", offset: offset, diagnostic: d });
+      } else if (!stack.includes(d)) {
+        points.push({ type: "begin", offset: offset, diagnostic: d });
+        stack.push(d);
+      }
+    }
+  }
+
+  function popInvalidStackEntries(offset, diagnosticsAtOffset) {
+    let newStackHeight = countValidStackEntries(diagnosticsAtOffset);
+    for (let i = stack.length; i-- > newStackHeight; ) {
+      let d = stack[i];
+      points.push({ type: "end", offset: offset, diagnostic: d });
+    }
+    stack.length = newStackHeight;
+  }
+
+  function countValidStackEntries(diagnosticsAtOffset) {
+    for (let i = 0; i < stack.length; ++i) {
+      let d = stack[i];
+      if (!diagnosticsAtOffset.includes(d)) {
+        return i;
+      }
+    }
+    return stack.length;
+  }
 }
 
 // quick-lint-js finds bugs in JavaScript programs.

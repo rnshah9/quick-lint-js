@@ -208,7 +208,7 @@
         { uri: "/releases/", title: "Releases" },
       ],
     },
-    { uri: "/demo/", title: "Try online" },
+    { uri: "/demo/", title: "Try online", sideBarOnly: true},
     {
       uri: "/docs/",
       title: "Docs",
@@ -219,6 +219,7 @@
         } },
         { uri: "/cli/", title: "CLI" },
         { uri: "/config/", title: "Config" },
+        { uri: "/docs/lsp/", title: "LSP" },
         {
           uri: "/contact/",
           title: "Contact",
@@ -266,11 +267,15 @@
 
   function pageLinkHTML(page) {
     if (typeof page.uri === "string") {
+      let classes = "";
+      if (page.sideBarOnly) {
+        classes += " side-bar-only";
+      }
       let titleHTML = ejs.escapeXML(page.title);
       if (page.uri === currentURI) {
-        return html`<li><span class="current-page">${titleHTML}</span></li>`;
+        return html`<li class="${classes}"><span class="current-page">${titleHTML}</span></li>`;
       } else {
-        return html`<li>
+        return html`<li class="${classes}">
           <a href="${ejs.escapeXML(makeRelativeURI(page.uri))}">${titleHTML}</a>
         </li>`;
       }
@@ -303,9 +308,9 @@
 <h1>quick-lint-js</h1>
 <% } else { %>
 <h1><a href="<%= makeRelativeURI('/') %>">quick-lint-js</a></h1>
-<% } %> <% if (!locals.hideTagLine) { %>
+<% } %>
 <p class="tag-line">Find bugs in JavaScript programs.</p>
-<% } %> <% if (currentURI !== "/") { %><a
+<% if (currentURI !== "/") { %><a
   href="<%= makeRelativeURI('/') %>"
   class="mascot"
   ><% } %><img

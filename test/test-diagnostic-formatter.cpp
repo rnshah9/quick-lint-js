@@ -4,11 +4,11 @@
 #include <cstddef>
 #include <cstring>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/diagnostic-formatter.h>
-#include <quick-lint-js/diagnostic.h>
-#include <quick-lint-js/language.h>
-#include <quick-lint-js/location.h>
+#include <quick-lint-js/fe/diagnostic-formatter.h>
+#include <quick-lint-js/fe/diagnostic.h>
+#include <quick-lint-js/fe/language.h>
+#include <quick-lint-js/fe/source-code-span.h>
+#include <quick-lint-js/port/char8.h>
 #include <string_view>
 
 using namespace std::literals::string_view_literals;
@@ -20,6 +20,9 @@ source_code_span empty_span(nullptr, nullptr);
 class string_diagnostic_formatter
     : public diagnostic_formatter<string_diagnostic_formatter> {
  public:
+  explicit string_diagnostic_formatter()
+      : diagnostic_formatter<string_diagnostic_formatter>(translator()) {}
+
   void write_before_message(std::string_view, diagnostic_severity,
                             const source_code_span&) {}
 
@@ -42,9 +45,11 @@ TEST(test_diagnostic_formatter, origin_span) {
 
   struct test_diagnostic_formatter
       : public diagnostic_formatter<test_diagnostic_formatter> {
+    using diagnostic_formatter<test_diagnostic_formatter>::diagnostic_formatter;
+
     void write_before_message(std::string_view, diagnostic_severity,
                               const source_code_span& origin_span) {
-      EXPECT_EQ(origin_span, span);
+      EXPECT_TRUE(same_pointers(origin_span, span));
       this->write_before_message_call_count += 1;
     }
 
@@ -53,7 +58,7 @@ TEST(test_diagnostic_formatter, origin_span) {
 
     void write_after_message(std::string_view, diagnostic_severity,
                              const source_code_span& origin_span) {
-      EXPECT_EQ(origin_span, span);
+      EXPECT_TRUE(same_pointers(origin_span, span));
       this->write_after_message_call_count += 1;
     }
 
@@ -61,7 +66,10 @@ TEST(test_diagnostic_formatter, origin_span) {
     int write_after_message_call_count = 0;
   };
 
-  test_diagnostic_formatter formatter;
+  translator t;
+  t.use_messages_from_source_code();
+
+  test_diagnostic_formatter formatter(t);
   formatter.format_message("E9999"sv, diagnostic_severity::error,
                            QLJS_TRANSLATABLE("something happened"),
                            diagnostic_message_args{{
@@ -231,6 +239,32 @@ TEST(test_diagnostic_formatter, message_with_escaped_curlies) {
                            }},
                            &code_span);
   EXPECT_EQ(formatter.message, u8"a {0} b }} c\n");
+}
+
+TEST(test_diagnostic_formatter, enum_kind_placeholder) {
+  struct test_diag {
+    source_code_span empty_span;
+    enum_kind kind;
+  };
+  constexpr diagnostic_message_args message_args = {
+      diagnostic_message_args{{
+          {offsetof(test_diag, empty_span),
+           diagnostic_arg_type::source_code_span},
+          {offsetof(test_diag, kind), diagnostic_arg_type::enum_kind},
+      }},
+  };
+
+  {
+    test_diag diag = {
+        .empty_span = empty_span,
+        .kind = enum_kind::normal,
+    };
+    string_diagnostic_formatter formatter;
+    formatter.format_message("E9999"sv, diagnostic_severity::error,
+                             QLJS_TRANSLATABLE("expected {1:headlinese}"),
+                             message_args, &diag);
+    EXPECT_EQ(formatter.message, u8"expected enum\n");
+  }
 }
 
 TEST(test_diagnostic_formatter, statement_kind_placeholder) {

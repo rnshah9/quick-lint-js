@@ -5,12 +5,13 @@
 #include <cstdint>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <quick-lint-js/async-byte-queue.h>
-#include <quick-lint-js/binary-writer.h>
-#include <quick-lint-js/string-view.h>
-#include <quick-lint-js/trace-writer.h>
+#include <quick-lint-js/container/async-byte-queue.h>
+#include <quick-lint-js/container/string-view.h>
+#include <quick-lint-js/logging/trace-writer.h>
+#include <quick-lint-js/util/binary-writer.h>
 
 using ::testing::ElementsAre;
+using namespace std::literals::string_view_literals;
 
 namespace quick_lint_js {
 namespace {
@@ -283,6 +284,30 @@ TEST(test_trace_writer, write_event_vscode_document_sync) {
                   // Content
                   0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  //
                   'h', 0, 'i', 0));
+}
+
+TEST(test_trace_writer, write_event_lsp_client_to_server_message) {
+  async_byte_queue data;
+  trace_writer w(&data);
+
+  w.write_event_lsp_client_to_server_message(
+      trace_event_lsp_client_to_server_message{
+          .timestamp = 0x5678,
+          .body = u8"{ }"sv,
+      });
+
+  data.commit();
+  EXPECT_THAT(data.take_committed_string8(),
+              ElementsAre(
+                  // Timestamp
+                  0x78, 0x56, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+                  // Event ID
+                  0x06,
+
+                  // Body
+                  3, 0, 0, 0, 0, 0, 0, 0,  // Size
+                  '{', ' ', '}'));
 }
 }
 }

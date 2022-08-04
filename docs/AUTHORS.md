@@ -23,11 +23,14 @@ authored portions of quick-lint-js:
 * A-thanasios; https://github.com/A-thanasios; signed CLA-v1.md
 * AidenThing; signed CLA-v1.md
 * Alessandro De Bellis; aledeb95@gmail.com; signed CLA-v1.md
+* Alex Via; alexviacoll@gmail.com; signed CLA-v1.md
 * Amir; amir77mafi@gmail.com; signed CLA-v1.md
 * Angel Avila; angel.j.avila@gmail.com; signed CLA-v1.md
 * Asaduzzaman Pavel; k1ngs.k1ngdom@live.com; signed CLA-v1.md
 * Biel A. P. (0xbiel); bielp07@gmail.com; signed CLA-v1.md
 * Brandon Conway; brandoncc@gmail.com; signed CLA-v1.md
+* Carlo Cabrera; https://github.com/carlocab; signed CLA-v1.md
+* Christopher M Stoddard; https://github.com/cmstoddard; signed CLA-v1.md
 * Daniel La Rocque; dlarocque.contact@gmail.com; signed CLA-v1.md
 * David Vasileff; signed CLA-v1.md
 * Dylan Elliott; signed CLA-v1.md
@@ -47,16 +50,19 @@ authored portions of quick-lint-js:
 * Matheus Phranco; matheusphranco@gmail.com; signed CLA-v1.md
 * Matheus Sousa; msamuel@aluno.puc-rio.br; signed CLA-v1.md
 * Max 👨🏽‍💻 Coplan; mchcopl@gmail.com; signed CLA-v1.md
+* Mothi Ghimire; mothi.ghimire@gmail.com; signed CLA-v1.md
 * Nico Sonack; nsonack@outlook.com; signed CLA-v1.md
 * Peter Khalil; https://github.com/m5tfi; signed CLA-v1.md
 * Rebraws; nahuel.braian@gmail.com; signed CLA-v1.md
 * Rob Miner; robminer@umich.edu; signed CLA-v1.md
+* Roland Strasser; signed CLA-v1.md
 * Sarah Schulte; sarah.schulte@samsara.com; signed CLA-v1.md
 * Shivam Mehta; sm.cse17@gmail.com; signed CLA-v1.md
 * Tony Sathre; tony@ghostbit.org; signed CLA-v1.md
 * Youness Asserare; signed CLA-v1.md
 * alex-huff; alexanderhuff53@gmail.com; signed CLA-v1.md
 * catac; https://github.com/catac1; signed CLA-v1.md
+* clegoz; signed CLA-v1.md
 * emadflash; signed CLA-v1.md
 * ooblegork; codyxvalley@mail.fresnostate.edu; signed CLA-v1.md
 * wagner riffel; w@104d.net; signed CLA-v1.md

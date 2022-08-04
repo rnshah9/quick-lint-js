@@ -3,20 +3,23 @@
 
 #include <benchmark/benchmark.h>
 #include <quick-lint-js/assert.h>
-#include <quick-lint-js/string-view.h>
-#include <quick-lint-js/translation.h>
+#include <quick-lint-js/container/string-view.h>
+#include <quick-lint-js/i18n/translation.h>
+#include <quick-lint-js/port/char8.h>
+
+using namespace std::literals::string_view_literals;
 
 namespace quick_lint_js {
 namespace {
 void benchmark_translate_from_source_code(benchmark::State &state) {
-  translatable_messages messages;
-  messages.use_messages_from_source_code();
+  translator t;
+  t.use_messages_from_source_code();
   for (auto _ : state) {
-    ::benchmark::DoNotOptimize(messages.translate(
+    ::benchmark::DoNotOptimize(t.translate(
         QLJS_TRANSLATABLE("variable assigned before its declaration")));
     ::benchmark::DoNotOptimize(
-        messages.translate(QLJS_TRANSLATABLE("variable declared here")));
-    ::benchmark::DoNotOptimize(messages.translate(QLJS_TRANSLATABLE(
+        t.translate(QLJS_TRANSLATABLE("variable declared here")));
+    ::benchmark::DoNotOptimize(t.translate(QLJS_TRANSLATABLE(
         "~~~ invalid string, do not use outside benchmark ~~~")));
   }
 }
@@ -24,32 +27,31 @@ BENCHMARK(benchmark_translate_from_source_code);
 
 struct translatable_message_with_original {
   translatable_message translatable;
-  const char *original;
+  string8_view original;
 };
 
 void benchmark_translate_from_translation_hit(benchmark::State &state) {
   static constexpr translatable_message_with_original messages_to_translate[] =
       {
           {QLJS_TRANSLATABLE("variable assigned before its declaration"),
-           "variable assigned before its declaration"},
+           u8"variable assigned before its declaration"_sv},
           {QLJS_TRANSLATABLE("variable declared here"),
-           "variable declared here"},
+           u8"variable declared here"_sv},
       };
 
-  translatable_messages messages;
-  bool have_translation = messages.use_messages_from_locale("en@loud");
+  translator t;
+  bool have_translation = t.use_messages_from_locale("en_US@snarky");
   QLJS_ALWAYS_ASSERT(have_translation);
   for (const translatable_message_with_original &message :
        messages_to_translate) {
     // Messages should be translated.
-    QLJS_ALWAYS_ASSERT(std::strcmp(messages.translate(message.translatable),
-                                   message.original) != 0);
+    QLJS_ALWAYS_ASSERT(t.translate(message.translatable) != message.original);
   }
 
   for (auto _ : state) {
     for (const translatable_message_with_original &message :
          messages_to_translate) {
-      ::benchmark::DoNotOptimize(messages.translate(message.translatable));
+      ::benchmark::DoNotOptimize(t.translate(message.translatable));
     }
   }
 }
@@ -60,26 +62,25 @@ void benchmark_translate_from_translation_miss(benchmark::State &state) {
       {
           {QLJS_TRANSLATABLE(
                "~~~ invalid string, do not use outside benchmark ~~~"),
-           "~~~ invalid string, do not use outside benchmark ~~~"},
+           u8"~~~ invalid string, do not use outside benchmark ~~~"_sv},
           {QLJS_TRANSLATABLE(
                "another invalid string, do not use outside benchmark"),
-           "another invalid string, do not use outside benchmark"},
+           u8"another invalid string, do not use outside benchmark"_sv},
       };
 
-  translatable_messages messages;
-  bool have_translation = messages.use_messages_from_locale("en@loud");
+  translator t;
+  bool have_translation = t.use_messages_from_locale("en_US@snarky");
   QLJS_ALWAYS_ASSERT(have_translation);
   for (const translatable_message_with_original &message :
        messages_to_translate) {
     // Messages should not be translated.
-    QLJS_ALWAYS_ASSERT(std::strcmp(messages.translate(message.translatable),
-                                   message.original) == 0);
+    QLJS_ALWAYS_ASSERT(t.translate(message.translatable) == message.original);
   }
 
   for (auto _ : state) {
     for (const translatable_message_with_original &message :
          messages_to_translate) {
-      ::benchmark::DoNotOptimize(messages.translate(message.translatable));
+      ::benchmark::DoNotOptimize(t.translate(message.translatable));
     }
   }
 }
@@ -87,43 +88,43 @@ BENCHMARK(benchmark_translate_from_translation_miss);
 
 void benchmark_load_translations(benchmark::State &state, const char *locale) {
   for (auto _ : state) {
-    translatable_messages messages;
-    bool have_translation = messages.use_messages_from_locale(locale);
+    translator t;
+    bool have_translation = t.use_messages_from_locale(locale);
     ::benchmark::DoNotOptimize(have_translation);
-    ::benchmark::DoNotOptimize(messages);
+    ::benchmark::DoNotOptimize(t);
   }
 }
 BENCHMARK_CAPTURE(benchmark_load_translations, c, "C");
 BENCHMARK_CAPTURE(benchmark_load_translations, en, "en");
-BENCHMARK_CAPTURE(benchmark_load_translations, en_loud, "en@loud");
+BENCHMARK_CAPTURE(benchmark_load_translations, en_snarky, "en_US@snarky");
 BENCHMARK_CAPTURE(benchmark_load_translations, en_us, "en_US");
-BENCHMARK_CAPTURE(benchmark_load_translations, en_us_loud, "en_US@loud");
+BENCHMARK_CAPTURE(benchmark_load_translations, en_us_snarky, "en_US@snarky");
 BENCHMARK_CAPTURE(benchmark_load_translations, en_us_utf8, "en_US.utf8");
-BENCHMARK_CAPTURE(benchmark_load_translations, en_us_utf8_loud,
-                  "en_US.utf8@loud");
+BENCHMARK_CAPTURE(benchmark_load_translations, en_us_utf8_snarky,
+                  "en_US.utf8@snarky");
 BENCHMARK_CAPTURE(benchmark_load_translations, posix, "POSIX");
 
 void benchmark_load_translations_and_find_hit(benchmark::State &state) {
   static constexpr translatable_message message_to_translate =
       QLJS_TRANSLATABLE("variable assigned before its declaration");
-  static constexpr const char *untranslated_message =
-      "variable assigned before its declaration";
+  static constexpr string8_view untranslated_message =
+      u8"variable assigned before its declaration"_sv;
 
-  const char *locale = "en@loud";
+  const char *locale = "en_US@snarky";
   {
     // Message should be translated.
-    translatable_messages messages;
-    bool have_translation = messages.use_messages_from_locale(locale);
+    translator t;
+    bool have_translation = t.use_messages_from_locale(locale);
     QLJS_ALWAYS_ASSERT(have_translation);
-    QLJS_ALWAYS_ASSERT(std::strcmp(messages.translate(message_to_translate),
-                                   untranslated_message) != 0);
+    QLJS_ALWAYS_ASSERT(t.translate(message_to_translate) !=
+                       untranslated_message);
   }
 
   for (auto _ : state) {
-    translatable_messages messages;
-    bool have_translation = messages.use_messages_from_locale(locale);
+    translator t;
+    bool have_translation = t.use_messages_from_locale(locale);
     ::benchmark::DoNotOptimize(have_translation);
-    ::benchmark::DoNotOptimize(messages.translate(message_to_translate));
+    ::benchmark::DoNotOptimize(t.translate(message_to_translate));
   }
 }
 BENCHMARK(benchmark_load_translations_and_find_hit);
@@ -131,24 +132,24 @@ BENCHMARK(benchmark_load_translations_and_find_hit);
 void benchmark_load_translations_and_find_miss(benchmark::State &state) {
   static constexpr translatable_message message_to_translate =
       QLJS_TRANSLATABLE("~~~ invalid string, do not use outside benchmark ~~~");
-  static constexpr const char *untranslated_message =
-      "~~~ invalid string, do not use outside benchmark ~~~";
+  static constexpr string8_view untranslated_message =
+      u8"~~~ invalid string, do not use outside benchmark ~~~"_sv;
 
-  const char *locale = "en@loud";
+  const char *locale = "en_US@snarky";
   {
     // Message should not be translated.
-    translatable_messages messages;
-    bool have_translation = messages.use_messages_from_locale(locale);
+    translator t;
+    bool have_translation = t.use_messages_from_locale(locale);
     QLJS_ALWAYS_ASSERT(have_translation);
-    QLJS_ALWAYS_ASSERT(std::strcmp(messages.translate(message_to_translate),
-                                   untranslated_message) == 0);
+    QLJS_ALWAYS_ASSERT(t.translate(message_to_translate) ==
+                       untranslated_message);
   }
 
   for (auto _ : state) {
-    translatable_messages messages;
-    bool have_translation = messages.use_messages_from_locale(locale);
+    translator t;
+    bool have_translation = t.use_messages_from_locale(locale);
     ::benchmark::DoNotOptimize(have_translation);
-    ::benchmark::DoNotOptimize(messages.translate(message_to_translate));
+    ::benchmark::DoNotOptimize(t.translate(message_to_translate));
   }
 }
 BENCHMARK(benchmark_load_translations_and_find_miss);

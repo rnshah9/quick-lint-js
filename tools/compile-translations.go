@@ -14,11 +14,11 @@
 // Our custom format addresses these issues:
 //
 // * All locales are merged into a single data structure.
-// * Hash table lookups happen at compile time, never at run time.
+// * Lookups happen at compile time, never at run time.
 // * The data is always native endian.
 //
 // The custom format has four parts:
-// * the compile-time hash table
+// * the compile-time lookup table
 // * the mapping table
 // * the string table
 // * the locale table
@@ -26,29 +26,15 @@
 //
 // These are the constants (C++ code):
 //
-//     std::size_t const_hash_table_size = /* ... */;
-//     std::uint64_t const_hash_offset_basis = /* ... */;
-//
 //     std::uint32_t locale_count = /* ... */;
 //     std::uint16_t mapping_table_size = /* ... */;
 //     std::size_t strings_size = /* ... */;
 //     std::size_t locale_table_size = /* ... */;
 //
-// The hash table is compile-time-only. It looks like this (C++ code):
-//
-//     struct const_hash_entry {
-//       std::uint16_t mapping_table_index;
-//       std::string_view untranslated;
-//     };
-//     const_hash_entry const_hash_table[const_hash_table_size];
-//
-// To generate the index in const_hash_table, use the 64-bit Fowler–Noll–Vo
-// FNV-1a hashing algorithm [1] on the UTF-8 untranslated string (excluding any
-// null terminators) with the offset_basis parameter set to hash_offset_basis.
-// Then, mod the hash by const_hash_table_size.
-//
-// In the case of a hash collision, use quadratic probing: generate the next
-// index by adding the square of the attempt number (mod const_hash_table_size).
+// The lookup table is compile-time-only. It is used to convert an untranslated
+// string into an index into the mapping table. The lookup table is a sorted
+// list of the untranslated strings. The sorting makes output deterministic and
+// also enables binary searching.
 //
 // The mapping table and the locale table are run-time-only. They look like this
 // (C++ code):
@@ -64,10 +50,10 @@
 //       /* ... */
 //       "";  // C++ adds an extra null byte for us.
 //
-// hash_entry::string_offsets[i] corresponds to the i-th locale listed in
+// mapping_entry::string_offsets[i] corresponds to the i-th locale listed in
 // locale_table.
 //
-// hash_entry::string_offsets[locale_count] refers to the original
+// mapping_entry::string_offsets[locale_count] refers to the original
 // (untranslated) string.
 //
 // Entry 0 of the mapping table is unused.
@@ -76,7 +62,16 @@
 // computed by calculating the difference between the first 0 byte starting at
 // the string offset and the string offset.
 //
-// [1] https://datatracker.ietf.org/doc/html/draft-eastlake-fnv-17.html
+// mapping_table is delta-encoded. The function decode(i, j) is implemented with
+// the following logic:
+//
+// * If mapping_table[i].string_offsets[j] == 0, then the index into the string
+//   table is 0 (i.e. the entry refers to an empty string).
+// * If mapping_table[i].string_offsets[j] != 0, then the index into the string
+//   table is computed as
+//   (mapping_table[i].string_offsets[j] + decode(last_i, j)), where last_i is
+//   the biggest value of i where
+//   (last_i < i && mapping_table[last_i].string_offsets[j] != 0).
 
 package main
 
@@ -85,7 +80,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -93,8 +87,6 @@ import (
 	"sort"
 	"strings"
 )
-
-const maxHashCollisions int = 4
 
 const poDirectory string = "po"
 
@@ -120,10 +112,10 @@ func main() {
 	locales[""] = ExtractGMOStrings(sourceGMO)
 
 	table := CreateTranslationTable(locales)
-	if err := WriteTranslationTableHeader(&table, "src/quick-lint-js/translation-table-generated.h"); err != nil {
+	if err := WriteTranslationTableHeader(&table, "src/quick-lint-js/i18n/translation-table-generated.h"); err != nil {
 		log.Fatal(err)
 	}
-	if err := WriteTranslationTableSource(&table, "src/translation-table-generated.cpp"); err != nil {
+	if err := WriteTranslationTableSource(&table, "src/quick-lint-js/i18n/translation-table-generated.cpp"); err != nil {
 		log.Fatal(err)
 	}
 	if err := WriteTranslationTest(locales, "test/quick-lint-js/test-translation-table-generated.h"); err != nil {
@@ -139,7 +131,7 @@ func writeFileHeader(writer *bufio.Writer) {
 }
 
 func ListPOFiles() ([]string, error) {
-	filesInPODirectory, err := ioutil.ReadDir(poDirectory)
+	filesInPODirectory, err := os.ReadDir(poDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -245,10 +237,14 @@ func ExtractGMOStrings(gmoData []byte) []TranslationEntry {
 }
 
 // Return value is sorted with no duplicates.
+//
+// The returned slice always contains an empty string at the beginning.
 func GetLocaleNames(locales map[string][]TranslationEntry) []string {
-	localeNames := []string{}
+	localeNames := []string{""}
 	for localeName := range locales {
-		localeNames = append(localeNames, localeName)
+		if localeName != "" {
+			localeNames = append(localeNames, localeName)
+		}
 	}
 	// Sort to make output deterministic.
 	sort.Strings(localeNames)
@@ -284,17 +280,16 @@ func GetAllUntranslated(locales map[string][]TranslationEntry) [][]byte {
 }
 
 type TranslationTable struct {
-	ConstHashTable       []TranslationTableConstHashEntry
-	ConstHashOffsetBasis uint64
-	MappingTable         []TranslationTableMappingEntry
-	StringTable          []byte
-	Locales              []string
-	LocaleTable          []byte
+	ConstLookupTable []TranslationTableConstLookupEntry
+	AbsoluteMappingTable     []TranslationTableMappingEntry
+	RelativeMappingTable     []TranslationTableMappingEntry
+	StringTable      []byte
+	Locales          []string
+	LocaleTable      []byte
 }
 
-type TranslationTableConstHashEntry struct {
-	MappingTableIndex uint16
-	Untranslated      []byte
+type TranslationTableConstLookupEntry struct {
+	Untranslated []byte
 }
 
 type TranslationTableMappingEntry struct {
@@ -326,72 +321,48 @@ func CreateTranslationTable(locales map[string][]TranslationEntry) TranslationTa
 	//   knows the bounds of the locale table.
 	// * Untranslated strings are placed in
 	//   hash_entry::string_offsets[locale_count].
-	if len(table.Locales) > 0 && table.Locales[0] == "" {
-		table.Locales = append(table.Locales[1:], table.Locales[0])
-	}
+	table.Locales = append(table.Locales[1:], table.Locales[0])
 
 	for _, localeName := range table.Locales {
 		addStringToTable([]byte(localeName), &table.LocaleTable)
 	}
 
-	// HACK(strager): len(keys) is all we need in theory, but we have too many
-	// collisions if we make the table that small.
-	hashTableSize := len(keys)*3/2 + 1
-	if hashTableSize == 0 {
-		hashTableSize = 1
-	}
-	table.ConstHashTable = make([]TranslationTableConstHashEntry, hashTableSize)
-	constHashTableEntryUsed := make([]bool, hashTableSize)
-	var initialConstHashOffsetBasis uint64 = 0xcbf29ce484222325 // Arbitrary.
-	table.ConstHashOffsetBasis = initialConstHashOffsetBasis
-
-retry:
-	for i := range table.ConstHashTable {
-		table.ConstHashTable[i].MappingTableIndex = 0
-		table.ConstHashTable[i].Untranslated = nil
-		constHashTableEntryUsed[i] = false
-	}
-
-	for keyIndex, key := range keys {
-		var entryIndex uint16
-		for attempt := 0; attempt <= maxHashCollisions; attempt += 1 {
-			entryIndex = table.ConstIndexByUntranslated(key, attempt)
-			if !constHashTableEntryUsed[entryIndex] {
-				goto foundEntry
-			}
-		}
-		{
-			// Too many hash collision occurred.
-			attempt := table.ConstHashOffsetBasis - initialConstHashOffsetBasis
-			if attempt >= 1000000 {
-				log.Fatalf("couldn't find a perfect offset basis after many tries")
-			}
-			if attempt%10000 == 0 {
-				fmt.Printf("%d attempts ...\n", attempt)
-			}
-			table.ConstHashOffsetBasis += 1
-			goto retry
-		}
-
-	foundEntry:
-		table.ConstHashTable[entryIndex].MappingTableIndex = uint16(keyIndex + 1)
-		table.ConstHashTable[entryIndex].Untranslated = key
-		constHashTableEntryUsed[entryIndex] = true
+	table.ConstLookupTable = make([]TranslationTableConstLookupEntry, len(keys))
+	for i, key := range keys {
+		table.ConstLookupTable[i].Untranslated = key
 	}
 
 	table.StringTable = []byte{0}
 	mappingTableSize := len(keys) + 1
-	table.MappingTable = make([]TranslationTableMappingEntry, mappingTableSize)
+	table.AbsoluteMappingTable = make([]TranslationTableMappingEntry, mappingTableSize)
 	for i := 0; i < mappingTableSize; i += 1 {
-		mappingEntry := &table.MappingTable[i]
-		mappingEntry.StringOffsets = make([]uint32, len(locales))
+		mappingEntry := &table.AbsoluteMappingTable[i]
+		mappingEntry.StringOffsets = make([]uint32, len(table.Locales))
 	}
 	for localeIndex, localeName := range table.Locales {
 		localeTranslations := locales[localeName]
 		for _, translation := range localeTranslations {
 			if !translation.IsMetadata() {
-				constHashEntry := table.FindConstHashEntryByUntranslated(translation.Untranslated)
-				table.MappingTable[constHashEntry.MappingTableIndex].StringOffsets[localeIndex] = addString(translation.Translated)
+				index := table.FindMappingTableIndexForUntranslated(translation.Untranslated)
+				table.AbsoluteMappingTable[index].StringOffsets[localeIndex] = addString(translation.Translated)
+			}
+		}
+	}
+
+	table.RelativeMappingTable = make([]TranslationTableMappingEntry, mappingTableSize)
+	table.RelativeMappingTable[0].StringOffsets = make([]uint32, len(table.Locales))
+	lastPresentStringOffsets := make([]uint32, len(table.Locales))
+	for i := 1; i < mappingTableSize; i += 1 {
+		relativeEntry := &table.RelativeMappingTable[i]
+		relativeEntry.StringOffsets = make([]uint32, len(table.Locales))
+
+		absoluteEntry := &table.AbsoluteMappingTable[i]
+		for localeIndex, _ := range table.Locales {
+			stringOffset := absoluteEntry.StringOffsets[localeIndex]
+			if stringOffset != 0 {
+				previousStringOffset := lastPresentStringOffsets[localeIndex]
+				relativeEntry.StringOffsets[localeIndex] = stringOffset - previousStringOffset
+				lastPresentStringOffsets[localeIndex] = stringOffset
 			}
 		}
 	}
@@ -399,31 +370,23 @@ retry:
 	return table
 }
 
-// Returns an index into table.ConstHashTable.
-func (table *TranslationTable) ConstIndexByUntranslated(originalString []byte, attempt int) uint16 {
-	hash := HashFNV1a64WithOffsetBasis(originalString, table.ConstHashOffsetBasis)
-	return uint16((hash + uint64(attempt*attempt)) % uint64(len(table.ConstHashTable)))
-}
-
-// Returns an index into table.ConstHashTable. If the entry matching
-// originalString does not exist, returns nil.
-func (table *TranslationTable) FindConstHashEntryByUntranslated(originalString []byte) *TranslationTableConstHashEntry {
-	for attempt := 0; attempt <= maxHashCollisions; attempt += 1 {
-		hashIndex := table.ConstIndexByUntranslated(originalString, attempt)
-		entry := &table.ConstHashTable[hashIndex]
-		if bytes.Equal(entry.Untranslated, originalString) {
-			return entry
+// Returns an index into table.MappingTable.
+// If originalString is bogus, returns -1.
+func (table *TranslationTable) FindMappingTableIndexForUntranslated(originalString []byte) int {
+	for i := range table.ConstLookupTable {
+		if bytes.Equal(table.ConstLookupTable[i].Untranslated, originalString) {
+			return i + 1
 		}
 	}
-	return nil
+	return -1
 }
 
 func (table *TranslationTable) LookUpMappingByUntranslated(originalString []byte) *TranslationTableMappingEntry {
-	entry := table.FindConstHashEntryByUntranslated(originalString)
-	if entry == nil {
+	index := table.FindMappingTableIndexForUntranslated(originalString)
+	if index == -1 {
 		return nil
 	}
-	return &table.MappingTable[entry.MappingTableIndex]
+	return &table.AbsoluteMappingTable[index]
 }
 
 func (table *TranslationTable) ReadString(stringOffset uint32) []byte {
@@ -444,16 +407,16 @@ func WriteTranslationTableHeader(table *TranslationTable, path string) error {
 
 	writer.WriteString(
 		`
-#ifndef QUICK_LINT_JS_TRANSLATION_TABLE_GENERATED_H
-#define QUICK_LINT_JS_TRANSLATION_TABLE_GENERATED_H
+#ifndef QUICK_LINT_JS_I18N_TRANSLATION_TABLE_GENERATED_H
+#define QUICK_LINT_JS_I18N_TRANSLATION_TABLE_GENERATED_H
 
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <quick-lint-js/assert.h>
-#include <quick-lint-js/consteval.h>
-#include <quick-lint-js/hash-fnv.h>
-#include <quick-lint-js/translation-table.h>
+#include <quick-lint-js/container/sorted-search.h>
+#include <quick-lint-js/i18n/translation-table.h>
+#include <quick-lint-js/port/consteval.h>
 #include <string_view>
 
 namespace quick_lint_js {
@@ -461,42 +424,30 @@ using namespace std::literals::string_view_literals;
 
 `)
 	fmt.Fprintf(writer, "constexpr std::uint32_t translation_table_locale_count = %d;\n", len(table.Locales)-1)
-	fmt.Fprintf(writer, "constexpr std::uint16_t translation_table_mapping_table_size = %d;\n", len(table.MappingTable))
+	fmt.Fprintf(writer, "constexpr std::uint16_t translation_table_mapping_table_size = %d;\n", len(table.RelativeMappingTable))
 	fmt.Fprintf(writer, "constexpr std::size_t translation_table_string_table_size = %d;\n", len(table.StringTable))
 	fmt.Fprintf(writer, "constexpr std::size_t translation_table_locale_table_size = %d;\n", len(table.LocaleTable))
 	fmt.Fprintf(writer, "\n")
 
 	writer.WriteString(
-		`QLJS_CONSTEVAL std::uint16_t translation_table_const_hash_table_look_up(
+		`QLJS_CONSTEVAL std::uint16_t translation_table_const_look_up(
     std::string_view untranslated) {
-  struct const_hash_entry {
-    std::uint16_t mapping_table_index;
-    const char* untranslated;
-  };
-
   // clang-format off
-  constexpr const_hash_entry const_hash_table[] = {
+  constexpr std::string_view const_lookup_table[] = {
 `)
-	for _, constHashEntry := range table.ConstHashTable {
-		fmt.Fprintf(writer, "          {%d, \"", constHashEntry.MappingTableIndex)
-		DumpStringLiteralBody(string(constHashEntry.Untranslated), writer)
-		writer.WriteString("\"},\n")
+	for _, constLookupEntry := range table.ConstLookupTable {
+		fmt.Fprintf(writer, "          \"")
+		DumpStringLiteralBody(string(constLookupEntry.Untranslated), writer)
+		writer.WriteString("\"sv,\n")
 	}
 	fmt.Fprintf(writer,
 		`  };
   // clang-format on
 
-  std::uint64_t hash = hash_fnv_1a_64(untranslated, %dULL);
-  std::uint64_t table_size = %d;
-  for (std::uint64_t attempt = 0; attempt <= %d; ++attempt) {
-    const const_hash_entry& hash_entry =
-        const_hash_table[(hash + attempt * attempt) %% table_size];
-    if (hash_entry.mapping_table_index == 0) {
-      break;
-    }
-    if (hash_entry.untranslated == untranslated) {
-      return hash_entry.mapping_table_index;
-    }
+  auto it = sorted_search(std::begin(const_lookup_table),
+                          std::end(const_lookup_table), untranslated);
+  if (it != std::end(const_lookup_table)) {
+    return std::uint16_t((it - std::begin(const_lookup_table)) + 1);
   }
 
   // If you see an error with the following line, translation-table-generated.h
@@ -509,7 +460,7 @@ using namespace std::literals::string_view_literals;
 
 #endif
 
-`, table.ConstHashOffsetBasis, len(table.ConstHashTable), maxHashCollisions)
+`)
 	WriteCopyrightFooter(writer)
 
 	if err := writer.Flush(); err != nil {
@@ -530,40 +481,51 @@ func WriteTranslationTableSource(table *TranslationTable, path string) error {
 
 	writer.WriteString(
 		`
-#include <quick-lint-js/translation-table.h>
+#include <array>
+#include <quick-lint-js/i18n/translation-table.h>
 
 namespace quick_lint_js {
-const translation_table translation_data =
-    {
-        .mapping_table =
-            {
+const translation_table translation_data = {
+    .mapping_table = translation_table::absolute_mapping_table_from_relative({{
 `)
-	for _, mappingEntry := range table.MappingTable {
-		writer.WriteString("                {")
+	mappingTableLines := []string{}
+	maxLineLength := 0
+	var temp bytes.Buffer
+	for _, mappingEntry := range table.RelativeMappingTable {
+		temp.Reset()
+		temp.WriteString("        {")
 		for i, stringOffset := range mappingEntry.StringOffsets {
 			if i != 0 {
-				writer.WriteString(", ")
+				temp.WriteString(", ")
 			}
-			fmt.Fprintf(writer, "%d", stringOffset)
+			fmt.Fprintf(&temp, "%d", stringOffset)
 		}
-		writer.WriteString("},\n")
+		fmt.Fprintf(&temp, "},")
+		line := string(temp.Bytes())
+		mappingTableLines = append(mappingTableLines, line)
+		if len(line) > maxLineLength {
+			maxLineLength = len(line)
+		}
+	}
+	for _, line := range mappingTableLines {
+		fmt.Fprintf(writer, "%s%*s  //\n", line, maxLineLength-len(line), "")
 	}
 	writer.WriteString(
-		`            },
+		`    }}),
 
-        // clang-format off
-        .string_table =
+    // clang-format off
+    .string_table =
 `)
-	DumpStringTable(table.StringTable, "            u8", writer)
+	DumpStringTable(table.StringTable, "        u8", writer)
 
 	writer.WriteString(
 		`,
-        // clang-format on
+    // clang-format on
 
-        .locale_table =
+    .locale_table =
 `)
 
-	DumpStringTable(table.LocaleTable, "            ", writer)
+	DumpStringTable(table.LocaleTable, "        ", writer)
 
 	writer.WriteString(
 		`,
@@ -607,8 +569,8 @@ func WriteTranslationTest(locales map[string][]TranslationEntry, path string) er
 #ifndef QUICK_LINT_JS_TEST_TRANSLATION_TABLE_GENERATED_H
 #define QUICK_LINT_JS_TEST_TRANSLATION_TABLE_GENERATED_H
 
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/translation.h>
+#include <quick-lint-js/i18n/translation.h>
+#include <quick-lint-js/port/char8.h>
 
 namespace quick_lint_js {
 // clang-format off
@@ -705,7 +667,11 @@ func DumpStringTable(strings []byte, linePrefix string, writer *bufio.Writer) {
 func DumpStringLiteralBody(s string, writer *bufio.Writer) {
 	for _, c := range s {
 		if c < 0x20 || c >= 0x7f {
-			fmt.Fprintf(writer, `\u%04x`, c)
+			if c >= 0x10000 {
+				fmt.Fprintf(writer, `\U%08x`, c)
+			} else {
+				fmt.Fprintf(writer, `\u%04x`, c)
+			}
 		} else if c == '\\' || c == '"' {
 			writer.WriteRune('\\')
 			writer.WriteRune(c)
@@ -713,19 +679,6 @@ func DumpStringLiteralBody(s string, writer *bufio.Writer) {
 			writer.WriteRune(c)
 		}
 	}
-}
-
-func HashFNV1a64(data []byte) uint64 {
-	return HashFNV1a64WithOffsetBasis(data, 0xcbf29ce484222325)
-}
-
-func HashFNV1a64WithOffsetBasis(data []byte, offsetBasis uint64) uint64 {
-	var hash uint64 = offsetBasis
-	for _, b := range data {
-		hash ^= uint64(b)
-		hash *= 0x00000100_000001b3
-	}
-	return hash
 }
 
 // quick-lint-js finds bugs in JavaScript programs.

@@ -2,7 +2,7 @@
   "name": "quick-lint-js",
   "description": "Find JavaScript bugs with quick-lint-js",
   "publisher": "quick-lint",
-  "version": "2.5.0",
+  "version": "2.8.0",
   "license": "SEE LICENSE IN LICENSE",
   "categories": [
     "Linters"
@@ -64,14 +64,17 @@
   "bugs": {
     "url": "https://github.com/quick-lint/quick-lint-js/issues"
   },
+  "sponsor": {
+    "url": "https://github.com/sponsors/quick-lint"
+  },
   "scripts": {
     "fmt": "prettier --write '*.js' 'test/*.js' '*.json' '.vscode/*.json'",
     "test": "node test/run-vscode-tests.js"
   },
   "devDependencies": {
     "colors": "1.4.0",
-    "prettier": "^2.4.1",
-    "vsce": "^1.100.0",
-    "vscode-test": "1.6.1"
+    "prettier": "2.6.2",
+    "vsce": "2.9.1",
+    "@vscode/test-electron": "2.1.4"
   }
 }

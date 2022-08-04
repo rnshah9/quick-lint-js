@@ -5,28 +5,28 @@
 #include <memory>
 #include <napi.h>
 #include <optional>
-#include <quick-lint-js/basic-configuration-filesystem.h>
-#include <quick-lint-js/change-detecting-filesystem.h>
-#include <quick-lint-js/configuration-loader.h>
-#include <quick-lint-js/configuration.h>
-#include <quick-lint-js/diag-reporter.h>
-#include <quick-lint-js/diagnostic-formatter.h>
-#include <quick-lint-js/diagnostic-types.h>
-#include <quick-lint-js/diagnostic.h>
+#include <quick-lint-js/configuration/basic-configuration-filesystem.h>
+#include <quick-lint-js/configuration/change-detecting-filesystem.h>
+#include <quick-lint-js/configuration/configuration-loader.h>
+#include <quick-lint-js/configuration/configuration.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/document.h>
-#include <quick-lint-js/event-loop.h>
-#include <quick-lint-js/have.h>
-#include <quick-lint-js/lint.h>
-#include <quick-lint-js/log.h>
-#include <quick-lint-js/logger.h>
-#include <quick-lint-js/lsp-location.h>
+#include <quick-lint-js/fe/diag-reporter.h>
+#include <quick-lint-js/fe/diagnostic-formatter.h>
+#include <quick-lint-js/fe/diagnostic-types.h>
+#include <quick-lint-js/fe/diagnostic.h>
+#include <quick-lint-js/fe/lint.h>
+#include <quick-lint-js/fe/parse.h>
+#include <quick-lint-js/io/event-loop.h>
+#include <quick-lint-js/io/pipe.h>
+#include <quick-lint-js/logging/log.h>
+#include <quick-lint-js/logging/logger.h>
+#include <quick-lint-js/logging/trace-flusher.h>
+#include <quick-lint-js/logging/trace-writer.h>
+#include <quick-lint-js/lsp/lsp-location.h>
 #include <quick-lint-js/napi-support.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/parse.h>
-#include <quick-lint-js/pipe.h>
-#include <quick-lint-js/thread.h>
-#include <quick-lint-js/trace-flusher.h>
-#include <quick-lint-js/trace-writer.h>
+#include <quick-lint-js/port/have.h>
+#include <quick-lint-js/port/thread.h>
 #include <quick-lint-js/vscode-diag-reporter.h>
 #include <quick-lint-js/vscode-tracer.h>
 #include <quick-lint-js/vscode.h>
@@ -901,7 +901,7 @@ class qljs_workspace : public ::Napi::ObjectWrap<qljs_workspace> {
       return this->stop_pipe_.reader.ref();
     }
 
-    void append(string8_view) { QLJS_UNREACHABLE(); }
+    [[noreturn]] void append(string8_view) { QLJS_UNREACHABLE(); }
 
 #if QLJS_HAVE_KQUEUE || QLJS_HAVE_POLL
     std::optional<posix_fd_file_ref> get_pipe_write_fd() {
@@ -910,9 +910,13 @@ class qljs_workspace : public ::Napi::ObjectWrap<qljs_workspace> {
 #endif
 
 #if QLJS_HAVE_KQUEUE
-    void on_pipe_write_event(const struct ::kevent&) { QLJS_UNREACHABLE(); }
+    [[noreturn]] void on_pipe_write_event(const struct ::kevent&) {
+      QLJS_UNREACHABLE();
+    }
 #elif QLJS_HAVE_POLL
-    void on_pipe_write_event(const ::pollfd&) { QLJS_UNREACHABLE(); }
+    [[noreturn]] void on_pipe_write_event(const ::pollfd&) {
+      QLJS_UNREACHABLE();
+    }
 #endif
 
     void filesystem_changed() {

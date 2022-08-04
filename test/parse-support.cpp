@@ -4,10 +4,10 @@
 #include <cstddef>
 #include <optional>
 #include <quick-lint-js/assert.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/expression.h>
+#include <quick-lint-js/fe/expression.h>
+#include <quick-lint-js/fe/parse.h>
 #include <quick-lint-js/parse-support.h>
-#include <quick-lint-js/parse.h>
+#include <quick-lint-js/port/char8.h>
 #include <string>
 
 namespace quick_lint_js {
@@ -66,10 +66,14 @@ std::string summarize(const expression& expression) {
     return "template(" + children() + ")";
   case expression_kind::_typeof:
     return "typeof(" + summarize(expression.child_0()) + ")";
+  case expression_kind::angle_type_assertion:
+    return "typeassert(" + summarize(expression.child_0()) + ")";
   case expression_kind::array:
     return "array(" + children() + ")";
   case expression_kind::arrow_function:
     return function_attributes() + "arrowfunc(" + children() + ")";
+  case expression_kind::as_type_assertion:
+    return "as(" + summarize(expression.child_0()) + ")";
   case expression_kind::assignment:
     return "assign(" + children() + ")";
   case expression_kind::await:
@@ -144,6 +148,8 @@ std::string summarize(const expression& expression) {
            to_string(expression.variable_identifier().normalized_name());
   case expression_kind::new_target:
     return "newtarget";
+  case expression_kind::non_null_assertion:
+    return "nonnull(" + summarize(expression.child_0()) + ")";
   case expression_kind::object: {
     std::string result = "object(";
     bool need_comma = false;
@@ -152,9 +158,15 @@ std::string summarize(const expression& expression) {
         result += ", ";
       }
       auto entry = expression.object_entry(i);
-      result += summarize(entry.property);
-      result += ", ";
+      if (entry.property) {
+        result += summarize(entry.property);
+        result += ": ";
+      }
       result += summarize(entry.value);
+      if (entry.init) {
+        result += " = ";
+        result += summarize(entry.init);
+      }
       need_comma = true;
     }
     result += ")";
@@ -162,6 +174,8 @@ std::string summarize(const expression& expression) {
   }
   case expression_kind::paren:
     return "paren(" + summarize(expression.child_0()) + ")";
+  case expression_kind::paren_empty:
+    return "parenempty";
   case expression_kind::private_variable:
     return "var " +
            to_string(expression.variable_identifier().normalized_name());
@@ -177,6 +191,8 @@ std::string summarize(const expression& expression) {
     return "taggedtemplate(" + children() + ")";
   case expression_kind::trailing_comma:
     return "trailingcomma(" + children() + ")";
+  case expression_kind::type_annotated:
+    return "typed(" + children() + ")";
   case expression_kind::unary_operator:
     return "unary(" + summarize(expression.child_0()) + ")";
   case expression_kind::compound_assignment:

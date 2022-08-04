@@ -6,21 +6,18 @@
 
 #include <boost/json/value.hpp>
 #include <gtest/gtest.h>
-#include <quick-lint-js/byte-buffer.h>
-#include <quick-lint-js/char8.h>
+#include <quick-lint-js/container/byte-buffer.h>
+#include <quick-lint-js/lsp/lsp-endpoint.h>
 #include <quick-lint-js/parse-json.h>
+#include <quick-lint-js/port/char8.h>
 #include <vector>
 
 namespace quick_lint_js {
-class spy_lsp_endpoint_remote {
+class spy_lsp_endpoint_remote final : public lsp_endpoint_remote {
  public:
-  void send_message(const byte_buffer& message) {
-    string8 message_json;
-    message_json.resize(message.size());
-    message.copy_to(message_json.data());
-    SCOPED_TRACE(out_string8(message_json));
-
-    ::boost::json::value parsed_message = parse_boost_json(message_json);
+  void send_message(byte_buffer&& message) override {
+    // TODO(strager): SCOPED_TRACE(message);
+    ::boost::json::value parsed_message = parse_boost_json(message);
     if (auto object = parsed_message.if_object()) {
       EXPECT_EQ((*object)["jsonrpc"], "2.0");
     } else if (auto array = parsed_message.if_array()) {
@@ -39,6 +36,44 @@ class spy_lsp_endpoint_remote {
     }
 
     this->messages.push_back(parsed_message);
+  }
+
+  std::vector<::boost::json::object> requests() const {
+    return this->collect_message_objects(is_request);
+  }
+
+  std::vector<::boost::json::object> responses() const {
+    return this->collect_message_objects(is_response);
+  }
+
+  std::vector<::boost::json::object> notifications() const {
+    return this->collect_message_objects(is_notification);
+  }
+
+  template <class Predicate>
+  std::vector<::boost::json::object> collect_message_objects(
+      Predicate&& include) const {
+    std::vector<::boost::json::object> result;
+    for (const ::boost::json::value& message_value : this->messages) {
+      if (const ::boost::json::object* message = message_value.if_object()) {
+        if (include(*message)) {
+          result.push_back(*message);
+        }
+      }
+    }
+    return result;
+  }
+
+  static bool is_request(const ::boost::json::object& message) {
+    return message.contains("id") && message.contains("method");
+  }
+
+  static bool is_response(const ::boost::json::object& message) {
+    return message.contains("id") && !message.contains("method");
+  }
+
+  static bool is_notification(const ::boost::json::object& message) {
+    return !message.contains("id") && message.contains("method");
   }
 
   std::vector<::boost::json::value> messages;

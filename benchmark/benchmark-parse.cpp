@@ -4,18 +4,19 @@
 #include <benchmark/benchmark.h>
 #include <cstdio>
 #include <cstdlib>
-#include <quick-lint-js/diagnostic-types.h>
-#include <quick-lint-js/file.h>
-#include <quick-lint-js/null-visitor.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/parse.h>
-#include <quick-lint-js/warning.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/fe/diagnostic-types.h>
+#include <quick-lint-js/fe/null-visitor.h>
+#include <quick-lint-js/fe/parse.h>
+#include <quick-lint-js/io/file.h>
+#include <quick-lint-js/port/warning.h>
 #include <string>
 
 QLJS_WARNING_IGNORE_MSVC(4996)  // Function or variable may be unsafe.
 
 namespace quick_lint_js {
 namespace {
+#if !defined(__EMSCRIPTEN__)  // TODO(#800): Support Emscripten.
 void benchmark_parse_file(benchmark::State &state) {
   const char *source_path_env_var = "QLJS_PARSE_BENCHMARK_SOURCE_FILE";
   const char *source_path = std::getenv(source_path_env_var);
@@ -35,6 +36,7 @@ void benchmark_parse_file(benchmark::State &state) {
   }
 }
 BENCHMARK(benchmark_parse_file);
+#endif
 
 void benchmark_parse(benchmark::State &state, string8_view raw_source) {
   padded_string source(raw_source);

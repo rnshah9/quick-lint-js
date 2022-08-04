@@ -4,14 +4,14 @@
 #include <cstddef>
 #include <gmock/gmock.h>
 #include <optional>
-#include <quick-lint-js/cli-location.h>
+#include <quick-lint-js/cli/cli-location.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/diag-collector.h>
 #include <quick-lint-js/diag-matcher.h>
-#include <quick-lint-js/diagnostic-types.h>
-#include <quick-lint-js/lex.h>
-#include <quick-lint-js/location.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/unreachable.h>
+#include <quick-lint-js/fe/diagnostic-types.h>
+#include <quick-lint-js/fe/lex.h>
+#include <quick-lint-js/fe/source-code-span.h>
+#include <quick-lint-js/port/unreachable.h>
 #include <vector>
 
 namespace quick_lint_js {
@@ -91,6 +91,10 @@ offsets_matcher::offsets_matcher(padded_string_view input,
       begin_offset_(begin_offset),
       end_offset_(begin_offset + text.size()) {}
 
+offsets_matcher::offsets_matcher(offsets_matcher &&) = default;
+
+offsets_matcher &offsets_matcher::operator=(offsets_matcher &&) = default;
+
 offsets_matcher::~offsets_matcher() = default;
 
 /*implicit*/ offsets_matcher::operator testing::Matcher<const identifier &>()
@@ -165,37 +169,101 @@ span_matcher::operator testing::Matcher<const source_code_span &>() const {
       new span_impl(this->expected_));
 }
 
-source_code_span diag_matcher::field::get_span(const void *error_object) const
+class source_code_span_matcher::span_impl
+    : public testing::MatcherInterface<const source_code_span &> {
+ public:
+  explicit span_impl(source_code_span expected) : expected_(expected) {}
+
+  void DescribeTo(std::ostream *out) const override {
+    *out << "begins at " << static_cast<const void *>(this->expected_.begin())
+         << " and ends at " << static_cast<const void *>(this->expected_.end());
+  }
+
+  void DescribeNegationTo(std::ostream *out) const override {
+    *out << "doesn't begin at "
+         << static_cast<const void *>(this->expected_.begin()) << " and end at "
+         << static_cast<const void *>(this->expected_.end());
+  }
+
+  bool MatchAndExplain(const source_code_span &span,
+                       testing::MatchResultListener *listener) const override {
+    bool result = same_pointers(span, this->expected_);
+    *listener << "whose span (from " << static_cast<const void *>(span.begin())
+              << " to " << static_cast<const void *>(span.end()) << ") "
+              << (result ? "equals" : "doesn't equal") << " expected (from "
+              << static_cast<const void *>(this->expected_.begin()) << " to "
+              << static_cast<const void *>(this->expected_.begin()) << ")";
+    return result;
+  }
+
+ private:
+  source_code_span expected_;
+};
+
+class source_code_span_matcher::identifier_impl
+    : public testing::MatcherInterface<const identifier &> {
+ public:
+  explicit identifier_impl(source_code_span expected) : impl_(expected) {}
+
+  void DescribeTo(std::ostream *out) const override {
+    this->impl_.DescribeTo(out);
+  }
+
+  void DescribeNegationTo(std::ostream *out) const override {
+    this->impl_.DescribeNegationTo(out);
+  }
+
+  bool MatchAndExplain(const identifier &ident,
+                       testing::MatchResultListener *listener) const override {
+    return this->impl_.MatchAndExplain(ident.span(), listener);
+  }
+
+ private:
+  span_impl impl_;
+};
+
+source_code_span_matcher::source_code_span_matcher(source_code_span expected)
+    : expected_(expected) {}
+
+source_code_span_matcher::operator testing::Matcher<const identifier &>()
+    const {
+  return testing::Matcher<const identifier &>(
+      new identifier_impl(this->expected_));
+}
+
+source_code_span_matcher::operator testing::Matcher<const source_code_span &>()
+    const {
+  return testing::Matcher<const source_code_span &>(
+      new span_impl(this->expected_));
+}
+
+source_code_span diag_matcher_arg::get_span(const void *error_object) const
     noexcept {
   const void *member_data =
       reinterpret_cast<const char *>(error_object) + this->member_offset;
   switch (this->member_type) {
-  case field_type::identifier:
+  case diagnostic_arg_type::identifier:
     return static_cast<const identifier *>(member_data)->span();
-  case field_type::source_code_span:
+  case diagnostic_arg_type::source_code_span:
     return *static_cast<const source_code_span *>(member_data);
+
+  case diagnostic_arg_type::char8:
+  case diagnostic_arg_type::enum_kind:
+  case diagnostic_arg_type::invalid:
+  case diagnostic_arg_type::statement_kind:
+  case diagnostic_arg_type::string8_view:
+  case diagnostic_arg_type::variable_kind:
+    QLJS_ASSERT(false && "invalid arg type");
+    break;
   }
   QLJS_UNREACHABLE();
 }
 
-diag_matcher::diag_matcher(diag_type type) : state_{type, std::nullopt, {}} {}
-
-diag_matcher::diag_matcher(padded_string_view input, diag_type type,
-                           field field_0)
-    : state_{type, input, {field_0}} {}
-
-diag_matcher::diag_matcher(padded_string_view input, diag_type type,
-                           field field_0, field field_1)
-    : state_{type, input, {field_0, field_1}} {}
-
-diag_matcher::diag_matcher(padded_string_view input, diag_type type,
-                           field field_0, field field_1, field field_2)
-    : state_{type, input, {field_0, field_1, field_2}} {}
-
-class diag_matcher::impl
+template <class State, class Field>
+class diag_fields_matcher_impl_base
     : public testing::MatcherInterface<const diag_collector::diag &> {
  public:
-  explicit impl(state s) : state_(std::move(s)) {}
+  explicit diag_fields_matcher_impl_base(State s) : state_(std::move(s)) {}
 
   void DescribeTo(std::ostream *out) const override {
     *out << "has type " << this->state_.type;
@@ -222,35 +290,105 @@ class diag_matcher::impl
 
     bool result = true;
     bool is_first_field = true;
-    for (const field &f : this->state_.fields) {
-      QLJS_ASSERT(this->state_.input.has_value());
-      source_code_span span = f.get_span(error.data());
-      auto span_begin_offset = narrow_cast<cli_source_position::offset_type>(
-          span.begin() - this->state_.input->data());
-      auto span_end_offset = narrow_cast<cli_source_position::offset_type>(
-          span.end() - this->state_.input->data());
-      auto expected_end_offset = f.begin_offset + f.text.size();
-
-      bool span_matches = span_begin_offset == f.begin_offset &&
-                          span_end_offset == expected_end_offset;
+    for (const Field &f : this->state_.fields) {
       if (!is_first_field) {
         *listener << " and ";
       }
-      *listener << "whose ." << f.member_name << " (" << span_begin_offset
-                << "-" << span_end_offset << ") "
-                << (span_matches ? "equals" : "doesn't equal") << " "
-                << f.begin_offset << "-" << expected_end_offset;
-      result = result && span_matches;
+      bool matches = this->field_matches(error, f, listener);
+      result = result && matches;
       is_first_field = false;
     }
     return result;
   }
 
- private:
-  state state_;
+ protected:
+  virtual bool field_matches(const diag_collector::diag &error, const Field &f,
+                             testing::MatchResultListener *listener) const = 0;
+
+  State state_;
+};
+
+diag_matcher::diag_matcher(diag_type type) : state_{type, std::nullopt, {}} {}
+
+diag_matcher::diag_matcher(padded_string_view input, diag_type type,
+                           field field_0)
+    : state_{type, input, {field_0}} {}
+
+diag_matcher::diag_matcher(padded_string_view input, diag_type type,
+                           field field_0, field field_1)
+    : state_{type, input, {field_0, field_1}} {}
+
+diag_matcher::diag_matcher(padded_string_view input, diag_type type,
+                           field field_0, field field_1, field field_2)
+    : state_{type, input, {field_0, field_1, field_2}} {}
+
+class diag_matcher::impl
+    : public diag_fields_matcher_impl_base<diag_matcher::state,
+                                           diag_matcher::field> {
+ public:
+  using base =
+      diag_fields_matcher_impl_base<diag_matcher::state, diag_matcher::field>;
+
+  using base::base;
+
+ protected:
+  bool field_matches(const diag_collector::diag &error, const field &f,
+                     testing::MatchResultListener *listener) const override {
+    QLJS_ASSERT(this->state_.input.has_value());
+    source_code_span span = f.arg.get_span(error.data());
+    auto span_begin_offset = narrow_cast<cli_source_position::offset_type>(
+        span.begin() - this->state_.input->data());
+    auto span_end_offset = narrow_cast<cli_source_position::offset_type>(
+        span.end() - this->state_.input->data());
+    auto expected_end_offset = f.begin_offset + f.text.size();
+
+    bool span_matches = span_begin_offset == f.begin_offset &&
+                        span_end_offset == expected_end_offset;
+    *listener << "whose ." << f.arg.member_name << " (" << span_begin_offset
+              << "-" << span_end_offset << ") "
+              << (span_matches ? "equals" : "doesn't equal") << " "
+              << f.begin_offset << "-" << expected_end_offset;
+    return span_matches;
+  }
 };
 
 /*implicit*/ diag_matcher::operator testing::Matcher<
+    const diag_collector::diag &>() const {
+  return testing::Matcher<const diag_collector::diag &>(new impl(this->state_));
+}
+
+diag_spans_matcher::diag_spans_matcher(diag_type type, field field_0)
+    : state_{type, {field_0}} {}
+
+diag_spans_matcher::diag_spans_matcher(diag_type type, field field_0,
+                                       field field_1)
+    : state_{type, {field_0, field_1}} {}
+
+class diag_spans_matcher::impl
+    : public diag_fields_matcher_impl_base<diag_spans_matcher::state,
+                                           diag_spans_matcher::field> {
+ public:
+  using base = diag_fields_matcher_impl_base<diag_spans_matcher::state,
+                                             diag_spans_matcher::field>;
+
+  using base::base;
+
+ protected:
+  bool field_matches(const diag_collector::diag &error, const field &f,
+                     testing::MatchResultListener *listener) const override {
+    source_code_span span = f.arg.get_span(error.data());
+    bool span_matches = same_pointers(span, f.expected);
+    *listener << "whose ." << f.arg.member_name << " (`"
+              << out_string8(span.string_view()) << "` @"
+              << reinterpret_cast<const void *>(span.begin()) << ") "
+              << (span_matches ? "equals" : "doesn't equal") << " `"
+              << out_string8(f.expected.string_view()) << "` @"
+              << reinterpret_cast<const void *>(f.expected.begin());
+    return span_matches;
+  }
+};
+
+/*implicit*/ diag_spans_matcher::operator testing::Matcher<
     const diag_collector::diag &>() const {
   return testing::Matcher<const diag_collector::diag &>(new impl(this->state_));
 }

@@ -11,25 +11,25 @@
 #include <cstring>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <quick-lint-js/basic-configuration-filesystem.h>
-#include <quick-lint-js/change-detecting-filesystem.h>
-#include <quick-lint-js/configuration-loader.h>
-#include <quick-lint-js/configuration.h>
-#include <quick-lint-js/event-loop.h>
+#include <quick-lint-js/cli/options.h>
+#include <quick-lint-js/configuration/basic-configuration-filesystem.h>
+#include <quick-lint-js/configuration/change-detecting-filesystem.h>
+#include <quick-lint-js/configuration/configuration-loader.h>
+#include <quick-lint-js/configuration/configuration.h>
 #include <quick-lint-js/fake-configuration-filesystem.h>
-#include <quick-lint-js/file-canonical.h>
 #include <quick-lint-js/file-matcher.h>
-#include <quick-lint-js/file-path.h>
-#include <quick-lint-js/file.h>
 #include <quick-lint-js/filesystem-test.h>
+#include <quick-lint-js/io/event-loop.h>
+#include <quick-lint-js/io/file-canonical.h>
+#include <quick-lint-js/io/file-path.h>
+#include <quick-lint-js/io/file.h>
 #include <quick-lint-js/mock-inotify.h>
 #include <quick-lint-js/mock-kqueue.h>
 #include <quick-lint-js/mock-win32.h>
-#include <quick-lint-js/options.h>
 #include <quick-lint-js/permissions.h>
-#include <quick-lint-js/thread.h>
-#include <quick-lint-js/warning.h>
-#include <quick-lint-js/windows-error.h>
+#include <quick-lint-js/port/thread.h>
+#include <quick-lint-js/port/warning.h>
+#include <quick-lint-js/port/windows-error.h>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -53,7 +53,7 @@
 #endif
 
 #if QLJS_HAVE_WINDOWS_H
-#include <quick-lint-js/windows.h>
+#include <quick-lint-js/port/windows.h>
 #endif
 
 QLJS_WARNING_IGNORE_GCC("-Wmissing-field-initializers")

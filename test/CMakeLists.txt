@@ -9,14 +9,21 @@ quick_lint_js_add_executable(
   quick-lint-js-test
   diag-collector.cpp
   diag-matcher.cpp
+  failing-diag-reporter.cpp
+  fake-configuration-filesystem.cpp
+  filesystem-test.cpp
+  lint-support.cpp
   parse-json.cpp
   parse-support.cpp
   quick-lint-js/array.h
   quick-lint-js/characters.h
   quick-lint-js/diag-collector.h
   quick-lint-js/diag-matcher.h
+  quick-lint-js/dirty-set.h
+  quick-lint-js/failing-diag-reporter.h
   quick-lint-js/file-matcher.h
   quick-lint-js/gtest.h
+  quick-lint-js/lint-support.h
   quick-lint-js/mock-inotify.h
   quick-lint-js/mock-kqueue.h
   quick-lint-js/mock-win32.h
@@ -44,6 +51,7 @@ quick_lint_js_add_executable(
   test-diag-matcher.cpp
   test-diagnostic-formatter.cpp
   test-diagnostic.cpp
+  test-dirty-set.cpp
   test-document.cpp
   test-emacs-lisp-diag-reporter.cpp
   test-emacs-location.cpp
@@ -51,12 +59,14 @@ quick_lint_js_add_executable(
   test-file-canonical.cpp
   test-file-path.cpp
   test-file.cpp
-  test-hash-fnv.cpp
+  test-heap-function.cpp
   test-integer-decimal.cpp
   test-integer-hexadecimal.cpp
   test-json.cpp
   test-lex.cpp
   test-linked-bump-allocator.cpp
+  test-linked-vector.cpp
+  test-lint-enum.cpp
   test-lint-parse.cpp
   test-lint-type.cpp
   test-lint.cpp
@@ -67,6 +77,8 @@ quick_lint_js_add_executable(
   test-lsp-message-parser.cpp
   test-lsp-pipe-writer.cpp
   test-lsp-server.cpp
+  test-lsp-uri.cpp
+  test-lsp-workspace-configuration.cpp
   test-math-overflow.cpp
   test-narrow-cast.cpp
   test-options.cpp
@@ -75,19 +87,33 @@ quick_lint_js_add_executable(
   test-parse-class.cpp
   test-parse-expression-jsx.cpp
   test-parse-expression-statement.cpp
+  test-parse-expression-typescript.cpp
   test-parse-expression.cpp
   test-parse-function.cpp
   test-parse-jsx.cpp
   test-parse-loop.cpp
   test-parse-module.cpp
   test-parse-statement.cpp
+  test-parse-typescript-ambiguous.cpp
+  test-parse-typescript-angle-type-assertion.cpp
+  test-parse-typescript-class.cpp
+  test-parse-typescript-enum.cpp
+  test-parse-typescript-function.cpp
+  test-parse-typescript-generic-arrow.cpp
+  test-parse-typescript-generic.cpp
   test-parse-typescript-interface.cpp
+  test-parse-typescript-module.cpp
+  test-parse-typescript-namespace.cpp
+  test-parse-typescript-type.cpp
+  test-parse-typescript-var.cpp
+  test-parse-typescript.cpp
   test-parse-var.cpp
   test-parse-warning.cpp
   test-parse.cpp
   test-pipe-writer.cpp
   test-result.cpp
   test-simd.cpp
+  test-sorted-search.cpp
   test-string-view.cpp
   test-temporary-directory.cpp
   test-text-diag-reporter.cpp
@@ -96,7 +122,6 @@ quick_lint_js_add_executable(
   test-trace-stream-reader.cpp
   test-trace-writer.cpp
   test-translation.cpp
-  test-uri.cpp
   test-utf-16.cpp
   test-utf-8.cpp
   test-vector-profiler.cpp
@@ -198,7 +223,7 @@ if (ICU_FOUND)
 endif ()
 
 find_package(PythonInterp 3.7)
-if (PYTHONINTERP_FOUND)
+if (QUICK_LINT_JS_ENABLE_CLI AND PYTHONINTERP_FOUND)
   add_test(
     NAME quick-lint-js-test-cli
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-cli.py

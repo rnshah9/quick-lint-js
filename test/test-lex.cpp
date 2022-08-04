@@ -2,26 +2,26 @@
 // See end of file for extended copyright information.
 
 #include <array>
+#include <boost/container/pmr/global_resource.hpp>
 #include <cstring>
-#include <deque>
-#include <functional>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <initializer_list>
 #include <iostream>
 #include <quick-lint-js/assert.h>
-#include <quick-lint-js/char8.h>
 #include <quick-lint-js/characters.h>
+#include <quick-lint-js/container/linked-vector.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/diag-collector.h>
 #include <quick-lint-js/diag-matcher.h>
-#include <quick-lint-js/lex.h>
-#include <quick-lint-js/location.h>
-#include <quick-lint-js/narrow-cast.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/fe/lex.h>
+#include <quick-lint-js/fe/source-code-span.h>
+#include <quick-lint-js/fe/token.h>
 #include <quick-lint-js/parse-support.h>
-#include <quick-lint-js/source-location.h>
-#include <quick-lint-js/token.h>
-#include <quick-lint-js/utf-8.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/port/source-location.h>
+#include <quick-lint-js/util/narrow-cast.h>
+#include <quick-lint-js/util/utf-8.h>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -54,6 +54,8 @@ namespace quick_lint_js {
 namespace {
 class test_lex : public ::testing::Test {
  protected:
+  // NOTE(strager): These functions take callbacks as function pointers to
+  // reduce build times. Templates and std::function are slow to compile.
   void check_single_token(string8_view input,
                           string8_view expected_identifier_name,
                           source_location = source_location::current());
@@ -71,16 +73,14 @@ class test_lex : public ::testing::Test {
   void check_tokens_with_errors(
       string8_view input,
       std::initializer_list<token_type> expected_token_types,
-      std::function<void(padded_string_view input,
-                         const std::vector<diag_collector::diag>&)>
-          check_errors,
+      void (*check_errors)(padded_string_view input,
+                           const std::vector<diag_collector::diag>&),
       source_location = source_location::current());
   void check_tokens_with_errors(
       padded_string_view input,
       std::initializer_list<token_type> expected_token_types,
-      std::function<void(padded_string_view input,
-                         const std::vector<diag_collector::diag>&)>
-          check_errors,
+      void (*check_errors)(padded_string_view input,
+                           const std::vector<diag_collector::diag>&),
       source_location = source_location::current());
   std::vector<token> lex_to_eof(padded_string_view, diag_collector&);
   std::vector<token> lex_to_eof(padded_string_view,
@@ -89,8 +89,7 @@ class test_lex : public ::testing::Test {
                                 source_location = source_location::current());
 
   lexer& make_lexer(padded_string_view input, diag_collector* errors) {
-    this->lexers_.emplace_back(input, errors);
-    return this->lexers_.back();
+    return this->lexers_.emplace_back(input, errors);
   }
 
   // If true, tell check_tokens_with_errors, lex_to_eof, etc. to call
@@ -99,7 +98,8 @@ class test_lex : public ::testing::Test {
   bool lex_jsx_tokens = false;
 
  private:
-  std::deque<lexer> lexers_;
+  linked_vector<lexer> lexers_ =
+      linked_vector<lexer>(::boost::container::pmr::new_delete_resource());
 };
 
 TEST_F(test_lex, lex_block_comments) {
@@ -1121,30 +1121,34 @@ TEST_F(test_lex, string_with_curly_quotes) {
 
   // Unclosed string:
   for (string8 opening_quote : {u8"\u2018", u8"\u201c"}) {
+    // HACK(strager): Use a static variable to avoid a closure in the lambda.
+    static string8 opening_quote_static;
+    opening_quote_static = opening_quote;
+
     this->check_tokens_with_errors(
         opening_quote + u8"string here", {token_type::string},
-        [&](padded_string_view input, const auto& errors) {
+        [](padded_string_view input, const auto& errors) {
           EXPECT_THAT(
               errors,
               UnorderedElementsAre(
                   DIAG_TYPE(diag_invalid_quotes_around_string_literal),
                   DIAG_TYPE_OFFSETS(input, diag_unclosed_string_literal,  //
                                     string_literal, 0,
-                                    opening_quote + u8"string here")));
+                                    opening_quote_static + u8"string here")));
         });
     for (string8_view line_terminator : line_terminators) {
       this->check_tokens_with_errors(
           opening_quote + u8"string here" + string8(line_terminator) +
               u8"next_line",
           {token_type::string, token_type::identifier},
-          [&](padded_string_view input, const auto& errors) {
+          [](padded_string_view input, const auto& errors) {
             EXPECT_THAT(
                 errors,
                 UnorderedElementsAre(
                     DIAG_TYPE(diag_invalid_quotes_around_string_literal),
                     DIAG_TYPE_OFFSETS(input, diag_unclosed_string_literal,  //
                                       string_literal, 0,
-                                      opening_quote + u8"string here")));
+                                      opening_quote_static + u8"string here")));
           });
     }
   }
@@ -1550,6 +1554,31 @@ TEST_F(test_lex, lex_regular_expression_literal_with_ascii_control_characters) {
   }
 }
 
+TEST_F(test_lex, split_less_less_into_two_tokens) {
+  padded_string input(u8"<<T>() => T>"_sv);
+
+  lexer l(&input, &null_diag_reporter::instance);
+  EXPECT_EQ(l.peek().type, token_type::less_less);
+  l.skip_less_less_as_less();
+  EXPECT_EQ(l.peek().type, token_type::less);
+  EXPECT_EQ(l.peek().begin, &input[1]);
+  EXPECT_EQ(l.peek().end, &input[2]);
+  EXPECT_EQ(l.end_of_previous_token(), &input[1]);
+  l.skip();
+  EXPECT_EQ(l.peek().type, token_type::identifier) << "T";
+}
+
+TEST_F(test_lex, split_less_less_has_no_leading_newline) {
+  padded_string input(u8"\n<<"_sv);
+
+  lexer l(&input, &null_diag_reporter::instance);
+  EXPECT_EQ(l.peek().type, token_type::less_less);
+  EXPECT_TRUE(l.peek().has_leading_newline);
+  l.skip_less_less_as_less();
+  EXPECT_EQ(l.peek().type, token_type::less);
+  EXPECT_FALSE(l.peek().has_leading_newline);
+}
+
 TEST_F(test_lex, lex_identifiers) {
   this->check_tokens(u8"i"_sv, {token_type::identifier});
   this->check_tokens(u8"_"_sv, {token_type::identifier});
@@ -1774,10 +1803,9 @@ TEST_F(test_lex, lex_identifier_with_out_of_range_utf_8_sequence) {
       "too\xf4\x90\x80\x80\x62ig"_s8v, "too\xf4\x90\x80\x80\x62ig"_s8v,
       [](padded_string_view input, const auto& errors) {
         EXPECT_THAT(errors,
-                    ElementsAre(DIAG_TYPE_FIELD(
-                        diag_invalid_utf_8_sequence, sequence,
-                        offsets_matcher(input, std::strlen("too"),
-                                        std::strlen("too\xf4\x90\x80\x80")))));
+                    ElementsAre(DIAG_TYPE_OFFSETS(
+                        input, diag_invalid_utf_8_sequence,  //
+                        sequence, std::strlen("too"), "\xf4\x90\x80\x80"_s8v)));
       });
 }
 
@@ -1789,17 +1817,13 @@ TEST_F(test_lex, lex_identifier_with_malformed_utf_8_sequence) {
         EXPECT_THAT(
             errors,
             ElementsAre(
-                DIAG_TYPE_FIELD(
-                    diag_invalid_utf_8_sequence, sequence,
-                    offsets_matcher(
-                        input, std::strlen("illegal"),
-                        std::strlen("illegal\xc0\xc1\xc2\xc3\xc4"))),
-                DIAG_TYPE_FIELD(
-                    diag_invalid_utf_8_sequence, sequence,
-                    offsets_matcher(
-                        input, std::strlen("illegal\xc0\xc1\xc2\xc3\xc4utf8"),
-                        std::strlen(
-                            "illegal\xc0\xc1\xc2\xc3\xc4utf8\xfe\xff")))));
+                DIAG_TYPE_OFFSETS(input, diag_invalid_utf_8_sequence,  //
+                                  sequence, std::strlen("illegal"),
+                                  "\xc0\xc1\xc2\xc3\xc4"_s8v),
+                DIAG_TYPE_OFFSETS(
+                    input, diag_invalid_utf_8_sequence,  //
+                    sequence, std::strlen("illegal\xc0\xc1\xc2\xc3\xc4utf8"),
+                    "\xfe\xff"_s8v)));
       });
 }
 
@@ -2560,8 +2584,7 @@ TEST_F(test_lex, transaction_buffers_errors_until_commit) {
 
   l.commit_transaction(std::move(transaction));
   EXPECT_THAT(errors.errors,
-              ElementsAre(DIAG_TYPE_FIELD(diag_no_digits_in_binary_number,
-                                          characters, testing::_)));
+              ElementsAre(DIAG_TYPE(diag_no_digits_in_binary_number)));
 }
 
 TEST_F(test_lex, nested_transaction_buffers_errors_until_outer_commit) {
@@ -2592,8 +2615,7 @@ TEST_F(test_lex, nested_transaction_buffers_errors_until_outer_commit) {
 
   l.commit_transaction(std::move(outer_transaction));
   EXPECT_THAT(errors.errors,
-              ElementsAre(DIAG_TYPE_FIELD(diag_no_digits_in_binary_number,
-                                          characters, testing::_)))
+              ElementsAre(DIAG_TYPE(diag_no_digits_in_binary_number)))
       << "committing outer_transaction should report 0b error";
 }
 
@@ -2668,8 +2690,7 @@ TEST_F(test_lex, errors_after_transaction_commit_are_reported_unbuffered) {
   l.skip();
   EXPECT_EQ(l.peek().type, token_type::number);
   EXPECT_THAT(errors.errors,
-              ElementsAre(DIAG_TYPE_FIELD(diag_no_digits_in_binary_number,
-                                          characters, testing::_)));
+              ElementsAre(DIAG_TYPE(diag_no_digits_in_binary_number)));
 }
 
 TEST_F(test_lex, errors_after_transaction_rollback_are_reported_unbuffered) {
@@ -2693,8 +2714,7 @@ TEST_F(test_lex, errors_after_transaction_rollback_are_reported_unbuffered) {
   l.skip();
   EXPECT_EQ(l.peek().type, token_type::number);
   EXPECT_THAT(errors.errors,
-              ElementsAre(DIAG_TYPE_FIELD(diag_no_digits_in_binary_number,
-                                          characters, testing::_)));
+              ElementsAre(DIAG_TYPE(diag_no_digits_in_binary_number)));
 }
 
 TEST_F(test_lex, rolling_back_transaction) {
@@ -3245,9 +3265,8 @@ void test_lex::check_tokens(
 
 void test_lex::check_tokens_with_errors(
     string8_view input, std::initializer_list<token_type> expected_token_types,
-    std::function<void(padded_string_view input,
-                       const std::vector<diag_collector::diag>&)>
-        check_errors,
+    void (*check_errors)(padded_string_view input,
+                         const std::vector<diag_collector::diag>&),
     source_location caller) {
   padded_string code(input);
   return this->check_tokens_with_errors(&code, expected_token_types,
@@ -3257,9 +3276,8 @@ void test_lex::check_tokens_with_errors(
 void test_lex::check_tokens_with_errors(
     padded_string_view input,
     std::initializer_list<token_type> expected_token_types,
-    std::function<void(padded_string_view input,
-                       const std::vector<diag_collector::diag>&)>
-        check_errors,
+    void (*check_errors)(padded_string_view input,
+                         const std::vector<diag_collector::diag>&),
     source_location caller) {
   diag_collector errors;
   std::vector<token> lexed_tokens = this->lex_to_eof(input, errors);

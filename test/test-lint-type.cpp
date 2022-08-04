@@ -4,14 +4,13 @@
 #include <cstring>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/configuration.h>
 #include <quick-lint-js/diag-collector.h>
 #include <quick-lint-js/diag-matcher.h>
+#include <quick-lint-js/fe/language.h>
+#include <quick-lint-js/fe/lint.h>
 #include <quick-lint-js/identifier-support.h>
-#include <quick-lint-js/language.h>
-#include <quick-lint-js/lex.h>
-#include <quick-lint-js/lint.h>
+#include <quick-lint-js/lint-support.h>
+#include <quick-lint-js/port/char8.h>
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
@@ -19,8 +18,6 @@ using ::testing::UnorderedElementsAre;
 
 namespace quick_lint_js {
 namespace {
-global_declared_variable_set default_globals = configuration().globals();
-
 TEST(test_lint_type, type_use_after_declaration_is_okay) {
   const char8 declaration[] = u8"I";
   const char8 use[] = u8"I";
@@ -46,8 +43,8 @@ TEST(test_lint_type, type_use_in_block_scope_after_declaration_is_okay) {
   const char8 declaration[] = u8"I";
   const char8 use[] = u8"I";
 
-  for (variable_kind kind :
-       {variable_kind::_class, variable_kind::_interface}) {
+  for (variable_kind kind : {variable_kind::_class, variable_kind::_enum,
+                             variable_kind::_interface}) {
     SCOPED_TRACE(kind);
 
     // interface I {}
@@ -76,16 +73,16 @@ TEST(test_lint_type, type_use_with_no_declaration_is_an_error) {
   l.visit_variable_type_use(identifier_of(use));
   l.visit_end_of_module();
 
-  EXPECT_THAT(v.errors, ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type,
-                                                    name, span_matcher(use))));
+  EXPECT_THAT(v.errors, ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type,
+                                                   name, span_of(use))));
 }
 
 TEST(test_lint_type, type_use_after_declaration_in_block_scope_is_an_error) {
   const char8 declaration[] = u8"I";
   const char8 use[] = u8"I";
 
-  for (variable_kind kind :
-       {variable_kind::_class, variable_kind::_interface}) {
+  for (variable_kind kind : {variable_kind::_class, variable_kind::_enum,
+                             variable_kind::_interface}) {
     SCOPED_TRACE(kind);
 
     // {
@@ -102,8 +99,8 @@ TEST(test_lint_type, type_use_after_declaration_in_block_scope_is_an_error) {
     l.visit_end_of_module();
 
     EXPECT_THAT(v.errors,
-                ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type, name,
-                                            span_matcher(use))));
+                ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type, name,
+                                           span_of(use))));
   }
 }
 
@@ -111,8 +108,8 @@ TEST(test_lint_type, type_use_before_declaration_is_okay) {
   const char8 declaration[] = u8"I";
   const char8 use[] = u8"I";
 
-  for (variable_kind kind :
-       {variable_kind::_class, variable_kind::_interface}) {
+  for (variable_kind kind : {variable_kind::_class, variable_kind::_enum,
+                             variable_kind::_interface}) {
     SCOPED_TRACE(kind);
 
     {
@@ -303,8 +300,8 @@ TEST(test_lint_type, type_use_does_not_see_non_type_variables) {
       // TODO(strager): Report a more helpful message indicating that 'I' is a
       // function or variable, not a type.
       EXPECT_THAT(v.errors,
-                  ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type, name,
-                                              span_matcher(use))));
+                  ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type, name,
+                                             span_of(use))));
     }
 
     {
@@ -324,8 +321,8 @@ TEST(test_lint_type, type_use_does_not_see_non_type_variables) {
       // TODO(strager): Report a more helpful message indicating that 'I' is a
       // function or variable, not a type.
       EXPECT_THAT(v.errors,
-                  ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type, name,
-                                              span_matcher(use))));
+                  ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type, name,
+                                             span_of(use))));
     }
 
     {
@@ -346,8 +343,8 @@ TEST(test_lint_type, type_use_does_not_see_non_type_variables) {
       // TODO(strager): Report a more helpful message indicating that 'I' is a
       // function or variable, not a type.
       EXPECT_THAT(v.errors,
-                  ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type, name,
-                                              span_matcher(use))));
+                  ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type, name,
+                                             span_of(use))));
     }
 
     {
@@ -373,8 +370,8 @@ TEST(test_lint_type, type_use_does_not_see_non_type_variables) {
       // TODO(strager): Report a more helpful message indicating that 'I' is a
       // function or variable, not a type.
       EXPECT_THAT(v.errors,
-                  ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_type, name,
-                                              span_matcher(use))));
+                  ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_type, name,
+                                             span_of(use))));
     }
   }
 }
@@ -422,18 +419,18 @@ TEST(test_lint_type, interfaces_are_ignored_in_runtime_expressions) {
               -> diags_matcher {
             if (runtime_var_kind.has_value()) {
               if (*runtime_var_kind == variable_kind::_const) {
-                return ElementsAre(DIAG_TYPE_2_FIELDS(
-                    diag_assignment_to_const_variable,     //
-                    assignment, span_matcher(assignment),  //
-                    declaration, span_matcher(outer_declaration)));
+                return ElementsAre(
+                    DIAG_TYPE_2_SPANS(diag_assignment_to_const_variable,  //
+                                      assignment, span_of(assignment),    //
+                                      declaration, span_of(outer_declaration)));
               } else {
                 return IsEmpty();
               }
             } else {
               // TODO(strager): Report a more helpful message.
               return ElementsAre(
-                  DIAG_TYPE_FIELD(diag_assignment_to_undeclared_variable,
-                                  assignment, span_matcher(assignment)));
+                  DIAG_TYPE_SPAN(diag_assignment_to_undeclared_variable,
+                                 assignment, span_of(assignment)));
             }
           },
       },
@@ -466,8 +463,8 @@ TEST(test_lint_type, interfaces_are_ignored_in_runtime_expressions) {
            return IsEmpty();
          } else {
            // TODO(strager): Report a more helpful message.
-           return ElementsAre(DIAG_TYPE_FIELD(diag_use_of_undeclared_variable,
-                                              name, span_matcher(use)));
+           return ElementsAre(DIAG_TYPE_SPAN(diag_use_of_undeclared_variable,
+                                             name, span_of(use)));
          }
        }},
   };
@@ -776,6 +773,37 @@ TEST(test_lint_type, mixing_interface_and_import_is_not_an_error) {
 
     EXPECT_THAT(v.errors, IsEmpty());
   }
+}
+
+TEST(test_lint_type, interfaces_conflict_with_generic_parameters) {
+  const char8 generic_parameter_declaration[] = u8"I";
+  const char8 interface_declaration[] = u8"I";
+
+  // function f<I>() {
+  //   interface I {}   // ERROR
+  // }
+  diag_collector v;
+  linter l(&v, &default_globals);
+  l.visit_enter_function_scope();
+  l.visit_variable_declaration(identifier_of(generic_parameter_declaration),
+                               variable_kind::_generic_parameter,
+                               variable_init_kind::normal);
+  l.visit_enter_function_scope_body();
+  l.visit_variable_declaration(identifier_of(interface_declaration),
+                               variable_kind::_interface,
+                               variable_init_kind::normal);
+  l.visit_enter_interface_scope();
+  l.visit_exit_interface_scope();
+  l.visit_exit_function_scope();
+  l.visit_end_of_module();
+
+  EXPECT_THAT(
+      v.errors,
+      ElementsAre(DIAG_TYPE_2_SPANS(diag_redeclaration_of_variable,  //
+                                    redeclaration,
+                                    span_of(interface_declaration),  //
+                                    original_declaration,
+                                    span_of(generic_parameter_declaration))));
 }
 }
 }

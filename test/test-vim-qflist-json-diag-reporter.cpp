@@ -2,12 +2,12 @@
 // See end of file for extended copyright information.
 
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/output-stream.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/cli/vim-location.h>
+#include <quick-lint-js/cli/vim-qflist-json-diag-reporter.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/io/output-stream.h>
 #include <quick-lint-js/parse-json.h>
-#include <quick-lint-js/vim-location.h>
-#include <quick-lint-js/vim-qflist-json-diag-reporter.h>
+#include <quick-lint-js/port/char8.h>
 #include <sstream>
 
 namespace quick_lint_js {
@@ -15,19 +15,19 @@ namespace {
 class test_vim_qflist_json_diag_reporter : public ::testing::Test {
  protected:
   vim_qflist_json_diag_reporter make_reporter() {
-    return vim_qflist_json_diag_reporter(&this->stream_);
+    return vim_qflist_json_diag_reporter(translator(), &this->stream_);
   }
 
   vim_qflist_json_diag_reporter make_reporter(padded_string_view input,
                                               int vim_bufnr) {
-    vim_qflist_json_diag_reporter reporter(&this->stream_);
+    vim_qflist_json_diag_reporter reporter(translator(), &this->stream_);
     reporter.set_source(input, /*vim_bufnr=*/vim_bufnr);
     return reporter;
   }
 
   vim_qflist_json_diag_reporter make_reporter(padded_string_view input,
                                               const char *file_name) {
-    vim_qflist_json_diag_reporter reporter(&this->stream_);
+    vim_qflist_json_diag_reporter reporter(translator(), &this->stream_);
     reporter.set_source(input, /*file_name=*/file_name);
     return reporter;
   }
@@ -150,17 +150,17 @@ TEST_F(test_vim_qflist_json_diag_reporter, change_source) {
   padded_string input_1(u8"aaaaaaaa"_sv);
   reporter.set_source(&input_1, /*file_name=*/"hello.js", /*vim_bufnr=*/1);
   reporter.report(diag_assignment_to_const_global_variable{
-      identifier(source_code_span(&input_1[4 - 1], &input_1[4 - 1]))});
+      identifier(source_code_span::unit(&input_1[4 - 1]))});
 
   padded_string input_2(u8"bbbbbbbb"_sv);
   reporter.set_source(&input_2, /*file_name=*/"world.js");
   reporter.report(diag_assignment_to_const_global_variable{
-      identifier(source_code_span(&input_2[5 - 1], &input_2[5 - 1]))});
+      identifier(source_code_span::unit(&input_2[5 - 1]))});
 
   padded_string input_3(u8"cccccccc"_sv);
   reporter.set_source(&input_3, /*vim_bufnr=*/2);
   reporter.report(diag_assignment_to_const_global_variable{
-      identifier(source_code_span(&input_3[6 - 1], &input_3[6 - 1]))});
+      identifier(source_code_span::unit(&input_3[6 - 1]))});
 
   reporter.finish();
 
@@ -293,7 +293,8 @@ TEST(test_vim_qflist_json_diag_formatter, single_span_simple_message) {
   vim_locator locator(&code);
 
   memory_output_stream stream;
-  vim_qflist_json_diag_formatter formatter(&stream, locator, "FILE",
+  vim_qflist_json_diag_formatter formatter(translator(), &stream, locator,
+                                           "FILE",
                                            /*bufnr=*/std::string_view());
   formatter.format(diag_info, &hello_span);
   stream.flush();
@@ -338,7 +339,8 @@ TEST(test_vim_qflist_json_diag_formatter, message_with_note_ignores_note) {
       .hello_span = source_code_span(&code[0], &code[5]),
       .world_span = source_code_span(&code[6], &code[11]),
   };
-  vim_qflist_json_diag_formatter formatter(&stream, locator, "FILE",
+  vim_qflist_json_diag_formatter formatter(translator(), &stream, locator,
+                                           "FILE",
                                            /*bufnr=*/std::string_view());
   formatter.format(diag_info, &diag);
   stream.flush();

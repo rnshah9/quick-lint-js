@@ -12,10 +12,10 @@
 .\"    Author: [see the "AUTHOR(S)" section]
 .\" Generator: Asciidoctor 2.0.17
 .\"    Manual: \ \&
-.\"    Source: quick-lint-js version ﻿ 2.5.0
+.\"    Source: quick-lint-js version ﻿ 2.8.0
 .\"  Language: English
 .\"
-.TH "QUICK\-LINT\-JS" "1" "" "quick\-lint\-js version ﻿ 2.5.0" "\ \&"
+.TH "QUICK\-LINT\-JS" "1" "" "quick\-lint\-js version ﻿ 2.8.0" "\ \&"
 .ie \n(.g .ds Aq \(aq
 .el       .ds Aq '
 .ss \n[.ss] 0
@@ -58,8 +58,9 @@ Check the given files, and report errors to the terminal (standard error).
 \fBquick\-lint\-js\fP \-\-lsp\-server
 .RS 4
 LSP server mode.
-Start a Language Server Protocol server, communicating using standard input and standard output.
 Use this mode to integrate with code editors supporting LSP.
+For more information, see
+\fBquick\-lint\-js\-lsp\fP(8).
 .RE
 .SH "OPTIONS"
 .sp
@@ -156,7 +157,7 @@ Therefore, if multiple input files are given, \fB\-\-vim\-file\-bufnr\fP can be 
 .sp
 \fB\-\-path\-for\-config\-search\fP=\fIpath\fP
 .RS 4
-  For the following input file or \fB\-\-stdin\fP, use \fIpath\fP as the file\(cqs path when
+For the following input file or \fB\-\-stdin\fP, use \fIpath\fP as the file\(cqs path when
 searching for a configuration file (see \fBquick\-lint\-js.config\fP(5)).
 .sp
 \fIpath\fP must be a syntactically\-valid path.
@@ -208,7 +209,8 @@ Incompatible with \fB\-\-lsp\-server\fP.
 .RS 4
 Run \fBquick\-lint\-js\fP in LSP server mode.
 Use this mode to integrate with code editors supporting LSP.
-An editor can send LSP requests and notifications to \fBquick\-lint\-js\fP via standard input, and receive LSP responses and notifications from standard output.
+For more information, see
+\fBquick\-lint\-js\-lsp\fP(8).
 .sp
 Incompatible with \fB\-\-output\-format\fP.
 .RE
@@ -409,7 +411,7 @@ $ \fBquick\-lint\-js\fP \-\-path\-for\-config\-search=src/server.js /tmp/unsaved
 .SH "SEE ALSO"
 .sp
 \fBeslint\fP(1)
-\fBquick\-lint\-js.config\fP(1)
+\fBquick\-lint\-js.config\fP(5)
 
 .\" quick-lint-js finds bugs in JavaScript programs.
 .\" Copyright (C) 2020  Matthew "strager" Glazar

@@ -7,10 +7,10 @@
 #include <cstddef>
 #include <napi.h>
 #include <quick-lint-js/assert.h>
+#include <quick-lint-js/io/temporary-directory.h>
+#include <quick-lint-js/logging/trace-flusher.h>
+#include <quick-lint-js/logging/trace-writer.h>
 #include <quick-lint-js/napi-support.h>
-#include <quick-lint-js/temporary-directory.h>
-#include <quick-lint-js/trace-flusher.h>
-#include <quick-lint-js/trace-writer.h>
 
 namespace quick_lint_js {
 // Writes N-API strings into buffers.
@@ -75,34 +75,7 @@ class vscode_tracer {
       // tracing.
       return;
     }
-
-    auto log_dir_result = create_directory(this->log_directory_);
-    if (!log_dir_result.ok()) {
-      if (!log_dir_result.error().is_directory_already_exists_error) {
-        QLJS_DEBUG_LOG("failed to create log directory %s: %s\n",
-                       this->log_directory_.c_str(),
-                       log_dir_result.error_to_string().c_str());
-        return;
-      }
-    }
-    result<std::string, platform_file_io_error> trace_directory =
-        make_timestamped_directory(this->log_directory_,
-                                   "trace_%Y-%m-%d-%H-%M-%S");
-    if (!trace_directory.ok()) {
-      QLJS_DEBUG_LOG("failed to create tracing directory in %s: %s\n",
-                     this->log_directory_.c_str(),
-                     trace_directory.error_to_string().c_str());
-      return;
-    }
-    auto result = this->tracer_->enable_for_directory(*trace_directory);
-    if (!result.ok()) {
-      QLJS_DEBUG_LOG("failed to enable tracing: %s\n",
-                     result.error_to_string().c_str());
-      return;
-    }
-
-    QLJS_DEBUG_LOG("enable tracing in directory %s\n",
-                   trace_directory->c_str());
+    this->tracer_->create_and_enable_in_child_directory(this->log_directory_);
   }
 
   void disable() { this->tracer_->disable(); }
@@ -134,7 +107,8 @@ class vscode_tracer {
       std::vector<trace_vscode_document_change> traced_changes(
           changes.Length());
       for (std::size_t i = 0; i < traced_changes.size(); ++i) {
-        ::Napi::Object change = changes.Get(i).As<::Napi::Object>();
+        ::Napi::Object change =
+            changes.Get(narrow_cast<std::uint32_t>(i)).As<::Napi::Object>();
         ::Napi::Object range = change.Get("range").As<::Napi::Object>();
         ::Napi::Object start = range.Get("start").As<::Napi::Object>();
         ::Napi::Object end = range.Get("end").As<::Napi::Object>();

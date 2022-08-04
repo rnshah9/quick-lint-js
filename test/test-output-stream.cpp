@@ -5,14 +5,14 @@
 #include <cerrno>
 #include <cstring>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/file-handle.h>
-#include <quick-lint-js/file.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/filesystem-test.h>
-#include <quick-lint-js/have.h>
-#include <quick-lint-js/narrow-cast.h>
-#include <quick-lint-js/output-stream.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/io/file-handle.h>
+#include <quick-lint-js/io/file.h>
+#include <quick-lint-js/io/output-stream.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/port/have.h>
+#include <quick-lint-js/util/narrow-cast.h>
 #include <string_view>
 
 #if QLJS_HAVE_FCNTL_H
@@ -133,6 +133,10 @@ TEST(test_memory_output_stream, append_with_callback_more_than_buffer_size) {
   EXPECT_EQ(s.get_flushed_string8(), message_0);
 }
 
+#if defined(__EMSCRIPTEN__)
+// No filesystem on web.
+#else
+
 class test_file_output_stream : public ::testing::Test,
                                 public filesystem_test {};
 
@@ -176,6 +180,8 @@ TEST_F(test_file_output_stream, destructing_flushes_pending_data) {
   EXPECT_EQ(after_contents->string_view(), u8"hello world"sv)
       << "data should be written after closing";
 }
+#endif
+
 #endif
 }
 }

@@ -5,7 +5,7 @@
 #define QUICK_LINT_JS_TRACE_STREAM_READER_MOCK_H
 
 #include <gmock/gmock.h>
-#include <quick-lint-js/trace-stream-reader.h>
+#include <quick-lint-js/logging/trace-stream-reader.h>
 
 namespace quick_lint_js {
 class mock_trace_stream_event_visitor : public trace_stream_event_visitor {
@@ -26,6 +26,8 @@ class mock_trace_stream_event_visitor : public trace_stream_event_visitor {
               (const vscode_document_closed_event&), (override));
   MOCK_METHOD(void, visit_vscode_document_sync_event,
               (const vscode_document_sync_event&), (override));
+  MOCK_METHOD(void, visit_lsp_client_to_server_message_event,
+              (const lsp_client_to_server_message_event&), (override));
 };
 
 using nice_mock_trace_stream_event_visitor =

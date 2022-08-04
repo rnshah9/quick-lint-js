@@ -1,17 +1,23 @@
 // Copyright (C) 2020  Matthew "strager" Glazar
 // See end of file for extended copyright information.
 
+#if defined(__EMSCRIPTEN__)
+// FIXME(#799): On macOS AArch64, Node.js v18.0.0 and older crash when running
+// tests in this file. Disable the tests for now.
+#else
+
 #include <cstdint>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <iterator>
 #include <quick-lint-js/array.h>
-#include <quick-lint-js/binary-reader.h>
-#include <quick-lint-js/char8.h>
+#include <quick-lint-js/logging/trace-stream-reader.h>
+#include <quick-lint-js/port/char8.h>
 #include <quick-lint-js/trace-stream-reader-mock.h>
-#include <quick-lint-js/trace-stream-reader.h>
+#include <quick-lint-js/util/binary-reader.h>
 
 using ::testing::ElementsAre;
+using namespace std::literals::string_view_literals;
 
 namespace quick_lint_js {
 namespace {
@@ -316,8 +322,35 @@ TEST(test_trace_stream_reader, vscode_document_sync_event) {
               u"hi"))));
   read_trace_stream(stream.data(), stream.size(), v);
 }
+
+TEST(test_trace_stream_reader, lsp_client_to_server_message_event) {
+  auto stream = concat(example_packet_header,
+                       make_array_explicit<std::uint8_t>(
+                           // Timestamp
+                           0x78, 0x56, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+
+                           // Event ID
+                           0x06,
+
+                           // Body
+                           2, 0, 0, 0, 0, 0, 0, 0,  // Size
+                           '{', '}'));
+
+  nice_mock_trace_stream_event_visitor v;
+  EXPECT_CALL(
+      v, visit_lsp_client_to_server_message_event(::testing::AllOf(
+             ::testing::Field(&trace_stream_event_visitor::
+                                  lsp_client_to_server_message_event::timestamp,
+                              0x5678),
+             ::testing::Field(&trace_stream_event_visitor::
+                                  lsp_client_to_server_message_event::body,
+                              u8"{}"sv))));
+  read_trace_stream(stream.data(), stream.size(), v);
 }
 }
+}
+
+#endif
 
 // quick-lint-js finds bugs in JavaScript programs.
 // Copyright (C) 2020  Matthew "strager" Glazar

@@ -4,8 +4,8 @@
 #ifndef QUICK_LINT_JS_SIMDJSON_H
 #define QUICK_LINT_JS_SIMDJSON_H
 
-#include <quick-lint-js/char8.h>
-#include <simdjson.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/simdjson-fwd.h>
 
 namespace quick_lint_js {
 string8_view get_raw_json(::simdjson::ondemand::value&);

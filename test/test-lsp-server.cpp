@@ -5,29 +5,33 @@
 // No LSP on the web.
 #else
 
+#include <boost/json.hpp>
 #include <boost/json/value.hpp>
-#include <functional>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <memory>
 #include <quick-lint-js/boost-json.h>
-#include <quick-lint-js/byte-buffer.h>
-#include <quick-lint-js/change-detecting-filesystem.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/configuration.h>
+#include <quick-lint-js/configuration/change-detecting-filesystem.h>
+#include <quick-lint-js/configuration/configuration.h>
+#include <quick-lint-js/container/byte-buffer.h>
+#include <quick-lint-js/container/heap-function.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/fake-configuration-filesystem.h>
-#include <quick-lint-js/file-handle.h>
-#include <quick-lint-js/lsp-endpoint.h>
-#include <quick-lint-js/lsp-server.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/filesystem-test.h>
+#include <quick-lint-js/io/file-handle.h>
+#include <quick-lint-js/logging/trace-flusher.h>
+#include <quick-lint-js/lsp/lsp-endpoint.h>
+#include <quick-lint-js/lsp/lsp-server.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/port/warning.h>
 #include <quick-lint-js/spy-lsp-endpoint-remote.h>
 #include <quick-lint-js/version.h>
-#include <quick-lint-js/warning.h>
 #include <simdjson.h>
 #include <tuple>
 #include <utility>
 
 QLJS_WARNING_IGNORE_CLANG("-Wcovered-switch-default")
+QLJS_WARNING_IGNORE_CLANG("-Wunused-member-function")
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
@@ -53,9 +57,6 @@ string8 make_message(string8_view content) {
          string8(content);
 }
 
-using endpoint =
-    lsp_endpoint<linting_lsp_server_handler, spy_lsp_endpoint_remote>;
-
 class mock_lsp_linter final : public lsp_linter {
  public:
   using lint_and_get_diagnostics_notification_type =
@@ -65,11 +66,11 @@ class mock_lsp_linter final : public lsp_linter {
   explicit mock_lsp_linter() = default;
 
   explicit mock_lsp_linter(
-      std::function<lint_and_get_diagnostics_notification_type> callback)
+      heap_function<lint_and_get_diagnostics_notification_type> callback)
       : callback_(std::move(callback)) {}
 
-  mock_lsp_linter(const mock_lsp_linter&) = default;
-  mock_lsp_linter& operator=(const mock_lsp_linter&) = default;
+  mock_lsp_linter(mock_lsp_linter&&) = default;
+  mock_lsp_linter& operator=(mock_lsp_linter&&) = default;
 
   ~mock_lsp_linter() override = default;
 
@@ -80,10 +81,10 @@ class mock_lsp_linter final : public lsp_linter {
   }
 
  private:
-  std::function<lint_and_get_diagnostics_notification_type> callback_;
+  heap_function<lint_and_get_diagnostics_notification_type> callback_;
 };
 
-class test_linting_lsp_server : public ::testing::Test {
+class test_linting_lsp_server : public ::testing::Test, public filesystem_test {
  public:
   explicit test_linting_lsp_server() { this->reset(); }
 
@@ -101,13 +102,14 @@ class test_linting_lsp_server : public ::testing::Test {
                                 notification_json);
           }
         });
-    this->server = std::make_unique<endpoint>(
-        /*handler_args=*/std::forward_as_tuple(&this->fs, &this->linter),
-        /*remote_args=*/std::forward_as_tuple());
-    this->client = &server->remote();
+    this->handler =
+        std::make_unique<linting_lsp_server_handler>(&this->fs, &this->linter);
+    this->client = std::make_unique<spy_lsp_endpoint_remote>();
+    this->server =
+        std::make_unique<lsp_endpoint>(this->handler.get(), this->client.get());
   }
 
-  std::function<void(configuration&, padded_string_view code,
+  heap_function<void(configuration&, padded_string_view code,
                      string8_view uri_json, string8_view version,
                      byte_buffer& notification_json)>
       lint_callback;
@@ -116,8 +118,9 @@ class test_linting_lsp_server : public ::testing::Test {
   fake_configuration_filesystem fs;
 
   mock_lsp_linter linter;
-  std::unique_ptr<endpoint> server;
-  spy_lsp_endpoint_remote* client;
+  std::unique_ptr<linting_lsp_server_handler> handler;
+  std::unique_ptr<spy_lsp_endpoint_remote> client;
+  std::unique_ptr<lsp_endpoint> server;
 
   std::string config_file_load_error_message(const char* js_path,
                                              const char* error_path) {
@@ -145,8 +148,9 @@ TEST_F(test_linting_lsp_server, initialize) {
         }
       })"));
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::object response = this->client->messages[0].as_object();
+  std::vector< ::boost::json::object> responses = this->client->responses();
+  ASSERT_EQ(responses.size(), 1);
+  ::boost::json::object response = responses[0];
   EXPECT_EQ(response["id"], 1);
   EXPECT_FALSE(response.contains("error"));
   // LSP InitializeResult:
@@ -159,6 +163,13 @@ TEST_F(test_linting_lsp_server, initialize) {
   EXPECT_EQ(look_up(response, "result", "serverInfo", "name"), "quick-lint-js");
   EXPECT_EQ(look_up(response, "result", "serverInfo", "version"),
             QUICK_LINT_JS_VERSION_STRING);
+
+  EXPECT_THAT(this->client->requests(), IsEmpty())
+      << "VS Code and other clients do not support server-to-client requests "
+         "before the initialized notification";
+  EXPECT_THAT(this->client->notifications(), IsEmpty())
+      << "VS Code and other clients do not support server-to-client "
+         "notifications before the initialized notification";
 }
 
 // For the "id" field of a request, JSON-RPC allows numbers, strings, and null.
@@ -181,6 +192,8 @@ TEST_F(test_linting_lsp_server, initialize_with_different_request_ids) {
            test_case{u8R"("id value goes \"here\"")",
                      ::boost::json::value("id value goes \"here\"")},
        }) {
+    SCOPED_TRACE(out_string8(test.id_json));
+
     this->reset();
 
     this->server->append(
@@ -196,8 +209,9 @@ TEST_F(test_linting_lsp_server, initialize_with_different_request_ids) {
           }
         })"));
 
-    ASSERT_EQ(this->client->messages.size(), 1);
-    EXPECT_EQ(this->client->messages[0].as_object()["id"], test.id);
+    std::vector< ::boost::json::object> responses = this->client->responses();
+    ASSERT_EQ(responses.size(), 1);
+    EXPECT_EQ(responses[0]["id"], test.id);
   }
 }
 
@@ -212,6 +226,214 @@ TEST_F(test_linting_lsp_server, server_ignores_initialized_notification) {
   EXPECT_THAT(this->client->messages, IsEmpty());
 }
 
+TEST_F(test_linting_lsp_server, loads_config_after_client_initialization) {
+  this->server->append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      })"));
+  this->handler->flush_pending_notifications(*this->client);
+
+  std::vector< ::boost::json::object> requests = this->client->requests();
+  ASSERT_EQ(requests.size(), 1);
+  ::boost::json::object request = requests[0];
+  EXPECT_EQ(look_up(request, "method"), "workspace/configuration");
+
+  std::vector<std::string> requested_sections;
+  ::boost::json::array items = look_up(request, "params", "items").as_array();
+  for (const ::boost::json::value& item : items) {
+    std::string section(to_string_view(look_up(item, "section").get_string()));
+    requested_sections.push_back(std::move(section));
+  }
+  EXPECT_THAT(requested_sections,
+              ::testing::Contains("quick-lint-js.tracing-directory"));
+}
+
+TEST_F(test_linting_lsp_server, stores_config_values_after_config_response) {
+  // Trigger a config request.
+  this->server->append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "initialized",
+        "params": {}
+      })"));
+  this->handler->flush_pending_notifications(*this->client);
+
+  std::vector< ::boost::json::object> requests = this->client->requests();
+  ASSERT_EQ(requests.size(), 1);
+  ::boost::json::object config_request = requests[0];
+  ::boost::json::value config_request_id = look_up(config_request, "id");
+  EXPECT_EQ(look_up(config_request, "method"), "workspace/configuration");
+
+  ::boost::json::array config_response_params;
+  ::boost::json::array items =
+      look_up(config_request, "params", "items").as_array();
+  for (const ::boost::json::value& item : items) {
+    std::string section(to_string_view(look_up(item, "section").get_string()));
+    if (section == "quick-lint-js.tracing-directory") {
+      config_response_params.push_back("/test/tracing/dir");
+    } else {
+      config_response_params.push_back(nullptr);
+    }
+  }
+
+  this->server->append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "id": )" + json_to_string8(config_request_id) +
+                   u8R"(,
+        "result": )" +
+                   json_to_string8(config_response_params) + u8R"(
+      })"));
+
+  linting_lsp_server_config& config = this->handler->server_config();
+  EXPECT_EQ(config.tracing_directory, "/test/tracing/dir");
+}
+
+TEST_F(test_linting_lsp_server, did_change_configuration_notification) {
+  this->server->append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": "/test/tracing/dir"
+          }
+        }
+      })"));
+  this->handler->flush_pending_notifications(*this->client);
+
+  EXPECT_THAT(this->client->messages, IsEmpty());
+  linting_lsp_server_config& config = this->handler->server_config();
+  EXPECT_EQ(config.tracing_directory, "/test/tracing/dir");
+}
+
+TEST_F(test_linting_lsp_server,
+       changing_config_to_same_tracing_dir_does_not_reset_tracing) {
+  std::string temp_dir = this->make_temporary_directory();
+  trace_flusher tracer;
+  fake_configuration_filesystem fs;
+  mock_lsp_linter linter;
+  linting_lsp_server_handler handler(&fs, &linter, &tracer);
+  spy_lsp_endpoint_remote client;
+  lsp_endpoint server(&handler, &client);
+
+  server.append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": )" +
+                   json_to_string8(::boost::json::string(temp_dir)) + u8R"(
+          }
+        }
+      })"));
+
+  std::vector<std::string> original_children =
+      list_files_in_directory(temp_dir);
+  EXPECT_THAT(original_children, ElementsAre(::testing::_))
+      << "enabling tracing in " << temp_dir
+      << " should create a trace subdirectory";
+
+  server.append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": )" +
+                   json_to_string8(::boost::json::string(temp_dir)) + u8R"(
+          }
+        }
+      })"));
+
+  std::vector<std::string> new_children = list_files_in_directory(temp_dir);
+  EXPECT_THAT(new_children, original_children)
+      << "enabling tracing in " << temp_dir
+      << " should not create another trace subdirectory";
+}
+
+TEST_F(test_linting_lsp_server,
+       changing_config_to_different_tracing_dir_resets_tracing) {
+  trace_flusher tracer;
+  fake_configuration_filesystem fs;
+  mock_lsp_linter linter;
+  linting_lsp_server_handler handler(&fs, &linter, &tracer);
+  spy_lsp_endpoint_remote client;
+  lsp_endpoint server(&handler, &client);
+
+  std::string original_tracing_dir = this->make_temporary_directory();
+  std::string new_tracing_dir = this->make_temporary_directory();
+
+  server.append(make_message(
+      u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": )" +
+      json_to_string8(::boost::json::string(original_tracing_dir)) +
+      u8R"(
+          }
+        }
+      })"));
+  server.append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": )" +
+                   json_to_string8(::boost::json::string(new_tracing_dir)) +
+                   u8R"(
+          }
+        }
+      })"));
+
+  std::vector<std::string> new_children =
+      list_files_in_directory(new_tracing_dir);
+  EXPECT_THAT(new_children, ElementsAre(::testing::_))
+      << "changing tracing dir from " << original_tracing_dir << " to "
+      << new_tracing_dir << " should create a new trace subdirectory";
+}
+
+TEST_F(test_linting_lsp_server,
+       changing_tracing_dir_config_to_empty_disables_tracing) {
+  std::string temp_dir = this->make_temporary_directory();
+  trace_flusher tracer;
+  fake_configuration_filesystem fs;
+  mock_lsp_linter linter;
+  linting_lsp_server_handler handler(&fs, &linter, &tracer);
+  spy_lsp_endpoint_remote client;
+  lsp_endpoint server(&handler, &client);
+
+  server.append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": )" +
+                   json_to_string8(::boost::json::string(temp_dir)) + u8R"(
+          }
+        }
+      })"));
+  EXPECT_TRUE(tracer.is_enabled());
+  server.append(
+      make_message(u8R"({
+        "jsonrpc": "2.0",
+        "method": "workspace/didChangeConfiguration",
+        "params": {
+          "settings": {
+            "quick-lint-js.tracing-directory": ""
+          }
+        }
+      })"));
+  EXPECT_FALSE(tracer.is_enabled());
+}
+
 // https://microsoft.github.io/language-server-protocol/specifications/specification-current/#shutdown
 TEST_F(test_linting_lsp_server, shutdown) {
   this->server->append(
@@ -221,8 +443,9 @@ TEST_F(test_linting_lsp_server, shutdown) {
         "method": "shutdown"
       })"));
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::object response = this->client->messages[0].as_object();
+  std::vector< ::boost::json::object> responses = this->client->responses();
+  ASSERT_EQ(responses.size(), 1);
+  ::boost::json::object response = responses[0];
   EXPECT_EQ(response["id"], 10);
   EXPECT_FALSE(response.contains("error"));
   EXPECT_EQ(response["result"], ::boost::json::value());
@@ -328,9 +551,12 @@ TEST_F(test_linting_lsp_server, opening_document_lints) {
             }
           }
         })"));
+    this->handler->flush_pending_notifications(*this->client);
 
-    ASSERT_EQ(this->client->messages.size(), 1);
-    ::boost::json::object response = this->client->messages[0].as_object();
+    std::vector< ::boost::json::object> notifications =
+        this->client->notifications();
+    ASSERT_EQ(notifications.size(), 1);
+    ::boost::json::object response = notifications[0];
     EXPECT_EQ(response["method"], "textDocument/publishDiagnostics");
     EXPECT_FALSE(response.contains("error"));
     // LSP PublishDiagnosticsParams:
@@ -931,6 +1157,7 @@ TEST_F(test_linting_lsp_server, editing_config_relints_many_open_js_files) {
         })"));
   }
 
+  this->handler->flush_pending_notifications(*this->client);
   this->lint_calls.clear();
   this->client->messages.clear();
   // Change 'before' to 'after'.
@@ -955,13 +1182,15 @@ TEST_F(test_linting_lsp_server, editing_config_relints_many_open_js_files) {
           ]
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_THAT(this->lint_calls,
               ::testing::UnorderedElementsAre(u8"/* a.js */", u8"/* b.js */",
                                               u8"/* c.js */"));
 
   std::vector<std::string> linted_uris;
-  for (::boost::json::value notification : this->client->messages) {
+  for (const ::boost::json::object& notification :
+       this->client->notifications()) {
     EXPECT_EQ(look_up(notification, "method"),
               "textDocument/publishDiagnostics");
     std::string uri(
@@ -1051,6 +1280,7 @@ TEST_F(test_linting_lsp_server, editing_config_relints_only_affected_js_files) {
         })"));
   }
 
+  this->handler->flush_pending_notifications(*this->client);
   this->lint_calls.clear();
   this->client->messages.clear();
   // Change 'a' to 'A' in dir-a/quick-lint-js.config (but leave
@@ -1077,11 +1307,13 @@ TEST_F(test_linting_lsp_server, editing_config_relints_only_affected_js_files) {
           ]
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_THAT(this->lint_calls, ElementsAre(u8"/* dir-a/test.js */"));
 
   std::vector<std::string> linted_uris;
-  for (::boost::json::value notification : this->client->messages) {
+  for (const ::boost::json::object& notification :
+       this->client->notifications()) {
     EXPECT_EQ(look_up(notification, "method"),
               "textDocument/publishDiagnostics");
     std::string uri(
@@ -1273,13 +1505,15 @@ TEST_F(test_linting_lsp_server,
 
   this->fs.create_file(this->fs.rooted("quick-lint-js.config"),
                        u8R"({"globals": {"after": true}})");
-  this->server->handler().filesystem_changed();
-  this->server->flush_pending_notifications();
+  this->handler->filesystem_changed();
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_TRUE(after_config_was_loaded);
 
-  ASSERT_THAT(this->client->messages, ElementsAre(::testing::_));
-  ::boost::json::object notification = this->client->messages[0].as_object();
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_THAT(notifications, ElementsAre(::testing::_));
+  ::boost::json::object notification = notifications[0];
   EXPECT_EQ(notification["method"], "textDocument/publishDiagnostics");
 }
 
@@ -1408,8 +1642,7 @@ TEST_F(test_linting_lsp_server, opening_js_file_with_unreadable_config_lints) {
   this->fs.create_file(
       this->fs.rooted("quick-lint-js.config"),
       [this]() -> fake_configuration_filesystem::read_file_result {
-        return fake_configuration_filesystem::read_file_result::failure<
-            read_file_io_error>(read_file_io_error{
+        return failed_result(read_file_io_error{
             .path = this->fs.rooted("quick-lint-js.config").path(),
             .io_error = generic_file_io_error,
         });
@@ -1451,16 +1684,17 @@ TEST_F(test_linting_lsp_server, opening_js_file_with_unreadable_config_lints) {
           }
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_THAT(this->lint_calls, ElementsAre(u8"testjs"))
       << "should have linted despite config file being unloadable";
 
-  ASSERT_EQ(this->client->messages.size(), 2);
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 2);
   std::size_t showMessageIndex =
-      look_up(this->client->messages[0], "method") == "window/showMessage" ? 0
-                                                                           : 1;
-  ::boost::json::object showMessageMessage =
-      this->client->messages[showMessageIndex].as_object();
+      look_up(notifications[0], "method") == "window/showMessage" ? 0 : 1;
+  ::boost::json::object showMessageMessage = notifications[showMessageIndex];
   EXPECT_EQ(look_up(showMessageMessage, "method"), "window/showMessage");
   EXPECT_EQ(look_up(showMessageMessage, "params", "type"),
             lsp_warning_message_type);
@@ -1510,16 +1744,17 @@ TEST_F(test_linting_lsp_server,
           }
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_THAT(this->lint_calls, ElementsAre(u8"testjs"))
       << "should have linted despite config file being unloadable";
 
-  ASSERT_EQ(this->client->messages.size(), 2);
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 2);
   std::size_t showMessageIndex =
-      look_up(this->client->messages[0], "method") == "window/showMessage" ? 0
-                                                                           : 1;
-  ::boost::json::object showMessageMessage =
-      this->client->messages[showMessageIndex].as_object();
+      look_up(notifications[0], "method") == "window/showMessage" ? 0 : 1;
+  ::boost::json::object showMessageMessage = notifications[showMessageIndex];
   EXPECT_EQ(look_up(showMessageMessage, "method"), "window/showMessage");
   EXPECT_EQ(look_up(showMessageMessage, "params", "type"),
             lsp_warning_message_type);
@@ -1552,8 +1787,7 @@ TEST_F(test_linting_lsp_server, making_config_file_unreadable_relints) {
   this->fs.create_file(
       this->fs.rooted("quick-lint-js.config"),
       [this]() -> fake_configuration_filesystem::read_file_result {
-        return fake_configuration_filesystem::read_file_result::failure<
-            read_file_io_error>(read_file_io_error{
+        return failed_result(read_file_io_error{
             .path = this->fs.rooted("quick-lint-js.config").path(),
             .io_error = generic_file_io_error,
         });
@@ -1579,19 +1813,19 @@ TEST_F(test_linting_lsp_server, making_config_file_unreadable_relints) {
         })");
   };
   this->client->messages.clear();
-  this->server->handler().filesystem_changed();
-  this->server->flush_pending_notifications();
+  this->handler->filesystem_changed();
+  this->handler->flush_pending_notifications(*this->client);
 
   EXPECT_THAT(this->lint_calls, ElementsAre(u8"testjs", u8"testjs"))
       << "should have linted twice: once on open, and once after config file "
          "changed";
 
-  ASSERT_EQ(this->client->messages.size(), 2);
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 2);
   std::size_t showMessageIndex =
-      look_up(this->client->messages[0], "method") == "window/showMessage" ? 0
-                                                                           : 1;
-  ::boost::json::object showMessageMessage =
-      this->client->messages[showMessageIndex].as_object();
+      look_up(notifications[0], "method") == "window/showMessage" ? 0 : 1;
+  ::boost::json::object showMessageMessage = notifications[showMessageIndex];
   EXPECT_EQ(look_up(showMessageMessage, "method"), "window/showMessage");
   EXPECT_EQ(look_up(showMessageMessage, "params", "type"),
             lsp_warning_message_type);
@@ -1615,9 +1849,12 @@ TEST_F(test_linting_lsp_server, opening_broken_config_file_shows_diagnostics) {
           }
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::object response = this->client->messages[0].as_object();
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 1);
+  ::boost::json::object response = notifications[0];
   EXPECT_EQ(response["method"], "textDocument/publishDiagnostics");
   EXPECT_FALSE(response.contains("error"));
   // LSP PublishDiagnosticsParams:
@@ -1655,6 +1892,7 @@ TEST_F(test_linting_lsp_server,
         }
       })"));
 
+  this->handler->flush_pending_notifications(*this->client);
   this->client->messages.clear();
   this->server->append(
       make_message(u8R"({
@@ -1673,9 +1911,12 @@ TEST_F(test_linting_lsp_server,
           ]
         }
       })"));
+  this->handler->flush_pending_notifications(*this->client);
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::object response = this->client->messages[0].as_object();
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 1);
+  ::boost::json::object response = notifications[0];
   EXPECT_EQ(response["method"], "textDocument/publishDiagnostics");
   EXPECT_FALSE(response.contains("error"));
   // LSP PublishDiagnosticsParams:
@@ -1891,7 +2132,7 @@ TEST_F(test_linting_lsp_server,
 }
 
 TEST_F(test_linting_lsp_server, showing_io_errors_shows_only_first) {
-  this->server->handler().add_watch_io_errors(std::vector<watch_io_error>{
+  this->handler->add_watch_io_errors(std::vector<watch_io_error>{
       watch_io_error{
           .path = "/banana",
           .io_error = generic_file_io_error,
@@ -1901,10 +2142,12 @@ TEST_F(test_linting_lsp_server, showing_io_errors_shows_only_first) {
           .io_error = generic_file_io_error,
       },
   });
-  this->server->flush_pending_notifications();
+  this->handler->flush_pending_notifications(*this->client);
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::value show_message_message = this->client->messages[0];
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 1);
+  ::boost::json::object show_message_message = notifications[0];
   EXPECT_EQ(look_up(show_message_message, "method"), "window/showMessage");
   EXPECT_EQ(look_up(show_message_message, "params", "type"),
             lsp_warning_message_type);
@@ -1915,37 +2158,44 @@ TEST_F(test_linting_lsp_server, showing_io_errors_shows_only_first) {
 }
 
 TEST_F(test_linting_lsp_server, showing_io_errors_shows_only_first_ever) {
-  this->server->handler().add_watch_io_errors(std::vector<watch_io_error>{
+  this->handler->add_watch_io_errors(std::vector<watch_io_error>{
       watch_io_error{
           .path = "/banana",
           .io_error = generic_file_io_error,
       },
   });
-  this->server->flush_pending_notifications();
+  this->handler->flush_pending_notifications(*this->client);
   // Separate call to add_watch_io_errors:
-  this->server->handler().add_watch_io_errors(std::vector<watch_io_error>{
+  this->handler->add_watch_io_errors(std::vector<watch_io_error>{
       watch_io_error{
           .path = "/orange",
           .io_error = generic_file_io_error,
       },
   });
-  this->server->flush_pending_notifications();
+  this->handler->flush_pending_notifications(*this->client);
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::value show_message_message = this->client->messages[0];
+  std::vector< ::boost::json::object> notifications =
+      this->client->notifications();
+  ASSERT_EQ(notifications.size(), 1);
+  ::boost::json::object show_message_message = notifications[0];
   std::string message(to_string_view(
       look_up(show_message_message, "params", "message").as_string()));
   EXPECT_THAT(message, ::testing::HasSubstr("/banana"));
   EXPECT_THAT(message, ::testing::Not(::testing::HasSubstr("orange")));
 }
 
-void expect_error(::boost::json::value& response, int error_code,
+void expect_error(::boost::json::object& response, int error_code,
                   std::string_view error_message) {
-  EXPECT_FALSE(response.as_object().contains("method"));
+  EXPECT_FALSE(response.contains("method"));
   EXPECT_EQ(look_up(response, "jsonrpc"), "2.0");
   EXPECT_EQ(look_up(response, "error", "code"), error_code);
   EXPECT_EQ(look_up(response, "error", "message"),
             to_boost_string_view(error_message));
+}
+
+void expect_error(::boost::json::value& response, int error_code,
+                  std::string_view error_message) {
+  expect_error(response.as_object(), error_code, error_message);
 }
 
 TEST_F(test_linting_lsp_server, invalid_json_in_request) {
@@ -2001,8 +2251,9 @@ TEST_F(test_linting_lsp_server, unimplemented_method_in_request_returns_error) {
         "params": {}
       })"));
 
-  ASSERT_EQ(this->client->messages.size(), 1);
-  ::boost::json::value response = this->client->messages[0];
+  std::vector< ::boost::json::object> responses = this->client->responses();
+  ASSERT_EQ(responses.size(), 1);
+  ::boost::json::object response = responses[0];
   EXPECT_EQ(look_up(response, "id"), 10);
   expect_error(response, -32601, "Method not found");
 }
@@ -2123,8 +2374,9 @@ TEST(test_lsp_javascript_linter, linting_does_not_desync) {
 
   fake_configuration_filesystem fs;
   lsp_javascript_linter linter;
-  lsp_endpoint<linting_lsp_server_handler, spy_lsp_endpoint_remote> server(
-      std::forward_as_tuple(&fs, &linter), std::forward_as_tuple());
+  linting_lsp_server_handler handler(&fs, &linter);
+  spy_lsp_endpoint_remote remote;
+  lsp_endpoint server(&handler, &remote);
   server.append(
       make_message(u8R"({
         "jsonrpc": "2.0",
@@ -2138,10 +2390,11 @@ TEST(test_lsp_javascript_linter, linting_does_not_desync) {
           }
         }
       })"));
+  handler.flush_pending_notifications(remote);
 
   {
-    ASSERT_EQ(server.remote().messages.size(), 1);
-    ::boost::json::object response = server.remote().messages[0].as_object();
+    ASSERT_EQ(remote.messages.size(), 1);
+    ::boost::json::object response = remote.messages[0].as_object();
     EXPECT_EQ(response["method"], "textDocument/publishDiagnostics");
     // LSP PublishDiagnosticsParams:
     ::boost::json::array diagnostics =
@@ -2149,7 +2402,8 @@ TEST(test_lsp_javascript_linter, linting_does_not_desync) {
     EXPECT_EQ(diagnostics.size(), 1) << "'x' should be undeclared";
   }
 
-  server.remote().messages.clear();
+  handler.flush_pending_notifications(remote);
+  remote.messages.clear();
 
   // Change "\u{79}" ("y") to "\u{78}" ("x").
   server.append(
@@ -2172,10 +2426,11 @@ TEST(test_lsp_javascript_linter, linting_does_not_desync) {
           ]
         }
       })"));
+  handler.flush_pending_notifications(remote);
 
   {
-    ASSERT_EQ(server.remote().messages.size(), 1);
-    ::boost::json::object response = server.remote().messages[0].as_object();
+    ASSERT_EQ(remote.messages.size(), 1);
+    ::boost::json::object response = remote.messages[0].as_object();
     EXPECT_EQ(response["method"], "textDocument/publishDiagnostics");
     // LSP PublishDiagnosticsParams:
     ::boost::json::array diagnostics =

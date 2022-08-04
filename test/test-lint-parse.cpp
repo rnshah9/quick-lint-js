@@ -4,23 +4,21 @@
 #include <cstring>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/configuration.h>
+#include <quick-lint-js/container/padded-string.h>
 #include <quick-lint-js/diag-collector.h>
 #include <quick-lint-js/diag-matcher.h>
-#include <quick-lint-js/language.h>
-#include <quick-lint-js/lex.h>
-#include <quick-lint-js/lint.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/parse.h>
+#include <quick-lint-js/fe/language.h>
+#include <quick-lint-js/fe/lint.h>
+#include <quick-lint-js/fe/parse.h>
+#include <quick-lint-js/lint-support.h>
+#include <quick-lint-js/parse-support.h>
+#include <quick-lint-js/port/char8.h>
 
 using ::testing::ElementsAre;
 using ::testing::IsEmpty;
 
 namespace quick_lint_js {
 namespace {
-global_declared_variable_set default_globals = configuration().globals();
-
 TEST(test_lint, let_variable_use_before_declaration_with_parsing) {
   padded_string input(u8"let x = y, y = x;"_sv);
   diag_collector v;
@@ -205,6 +203,78 @@ TEST(test_lint, delete_local_variable) {
       v.errors,
       ElementsAre(DIAG_TYPE(diag_redundant_delete_statement_on_variable),
                   DIAG_TYPE(diag_redundant_delete_statement_on_variable)));
+}
+
+TEST(test_lint, extends_self) {
+  {
+    padded_string input(
+        u8"function C() {}\n"_sv
+        u8"{\n"_sv
+        u8"  class C extends C {}"_sv
+        u8"}"_sv);
+    diag_collector v;
+    linter l(&v, &default_globals);
+    parser p(&input, &v);
+    p.parse_and_visit_module(l);
+    l.visit_end_of_module();
+
+    EXPECT_THAT(v.errors,
+                ElementsAre(DIAG_TYPE(diag_variable_used_before_declaration)));
+  }
+
+  {
+    padded_string input(
+        u8"function C() {}\n"_sv
+        u8"{\n"_sv
+        u8"  class C extends (null, [C][0], Object) {}"_sv
+        u8"}"_sv);
+    diag_collector v;
+    linter l(&v, &default_globals);
+    parser p(&input, &v);
+    p.parse_and_visit_module(l);
+    l.visit_end_of_module();
+
+    EXPECT_THAT(v.errors,
+                ElementsAre(DIAG_TYPE(diag_variable_used_before_declaration)));
+  }
+
+  {
+    padded_string input(
+        u8"function C() {}\n"_sv
+        u8"{\n"_sv
+        u8"  (class C extends C {})"_sv
+        u8"}"_sv);
+    diag_collector v;
+    linter l(&v, &default_globals);
+    parser p(&input, &v);
+    p.parse_and_visit_module(l);
+    l.visit_end_of_module();
+
+    EXPECT_THAT(v.errors,
+                ElementsAre(DIAG_TYPE(diag_variable_used_before_declaration)));
+  }
+}
+
+TEST(test_lint, typescript_static_block_can_reference_class) {
+  {
+    padded_string input(u8"class C { static { C; } }"_sv);
+    diag_collector v;
+    linter l(&v, &default_globals);
+    parser p(&input, &v, typescript_options);
+    p.parse_and_visit_module(l);
+    l.visit_end_of_module();
+    EXPECT_THAT(v.errors, IsEmpty());
+  }
+
+  {
+    padded_string input(u8"(class C { static { C; } });"_sv);
+    diag_collector v;
+    linter l(&v, &default_globals);
+    parser p(&input, &v, typescript_options);
+    p.parse_and_visit_module(l);
+    l.visit_end_of_module();
+    EXPECT_THAT(v.errors, IsEmpty());
+  }
 }
 }
 }

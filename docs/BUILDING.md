@@ -5,7 +5,7 @@
 If you want to quickly compile quick-lint-js to try it out, and don't want to
 install CMake or Ninja, run the following commands (macOS and Linux only):
 
-    $ c++ -o quick-lint-js -std=gnu++17 -I src -I vendor/boost -I vendor/simdjson/include -I vendor/simdjson/src -D_LIBCPP_HIDE_FROM_ABI_PER_TU_BY_DEFAULT=1 -D_LIBCPP_INLINE_VISIBILITY="__attribute__((internal_linkage))" src/*.cpp vendor/boost/libs/container/src/*.cpp vendor/boost/libs/container/src/alloc_lib.c vendor/simdjson/src/simdjson.cpp -pthread
+    $ c++ -o quick-lint-js -std=gnu++17 -I src -I vendor/boost -I vendor/simdjson/include -I vendor/simdjson/src -D_LIBCPP_HIDE_FROM_ABI_PER_TU_BY_DEFAULT=1 -D_LIBCPP_INLINE_VISIBILITY="__attribute__((internal_linkage))" src/quick-lint-js/*.cpp src/quick-lint-js/*/*.cpp vendor/boost/libs/container/src/*.cpp vendor/boost/libs/container/src/alloc_lib.c vendor/simdjson/src/simdjson.cpp -pthread
     $ ./quick-lint-js path/to/my-file.js
 
 ## For contributors
@@ -35,7 +35,7 @@ development environment and build tool:
 
 Before building quick-lint-js, install the following third-party dependencies:
 
-* GCC version 8.3 or newer
+* [GCC][] version 8.3 or newer
 * [CMake][] version 3.10 or newer
 * [Ninja][]
 
@@ -105,9 +105,9 @@ If you want to run the quick-lint-js program:
 
 Before building quick-lint-js, install the following third-party dependencies:
 
-* GCC version 8.3 or newer
+* [GCC][] version 8.3 or newer
 * [CMake][] version 3.10 or newer
-* GNU Make
+* [GNU Make][]
 
 #### 1. Configure with CMake
 
@@ -283,7 +283,10 @@ To run the tests, execute the test binary in the build directory:
 
     $ ./test/quick-lint-js-test
 
+[GCC]: https://gcc.gnu.org/
 [CMake]: https://cmake.org/
 [Ninja]: https://ninja-build.org/
+[GNU Make]: https://www.gnu.org/software/make/
+[Homebrew]: https://brew.sh/
 [Visual Studio]: https://visualstudio.microsoft.com/vs/
 [Nix]: https://nixos.org/manual/nix/stable/

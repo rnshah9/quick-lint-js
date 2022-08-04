@@ -8,13 +8,13 @@ quick-lint-js on Debian, Ubuntu, and other Linux distributions.
 On a Debian-based machine, install dependencies for .deb generation:
 
     # libgmock-dev, libgtest-dev, libsimdjson-dev, and pkg-config are optional
-    # when building with --xenial.
+    # when building with --bionic.
     $ sudo apt-get install build-essential cmake debhelper dpkg-dev fakeroot git libgmock-dev libgtest-dev libsimdjson-dev lintian pkg-config
 
 Then, run the `build.sh` script:
 
-    # If you are on an old distribution (such as Ubuntu 16.04 Xenial), give
-    # the '--xenial' flag to build.sh.
+    # If you are on an old distribution (such as Ubuntu 18.04 Bionic), give
+    # the '--bionic' flag to build.sh.
     $ ./dist/debian/build.sh
 
 The above command will create `dist/debian/quick-lint-js_2.4.2-1_amd64.deb`,
@@ -48,7 +48,7 @@ To test `asgen-config.json` or metadata changes locally:
    * Change `MediaBaseUrl` to `"http://localhost:8069/appstream/export/media/"`.
    * Change `HtmlBaseUrl` to `"http://localhost:8069/appstream/export/html/"`.
 5. Create a directory `debian/pool/`.
-6. Copy `dist/debian/*2.5.0*` (built by the [Building](#Building) instructions
+6. Copy `dist/debian/*2.8.0*` (built by the [Building](#Building) instructions
    above) into the `debian/pool/` directory.
 7. Run `./dist/debian/update-repository path/to/debian`.
 8. Start an HTTP server in the `debian` directory. For example:
@@ -73,7 +73,7 @@ To release to downstream Debian, we [ship a source package to Debian mentors][].
 1. Download a signed release .tar.gz and .tar.gz.asc (e.g. from
    <https://c.quick-lint-js.com/releases/latest/source/>).
 2. Create a package using `package.sh`:
-   `./dist/debian/package.sh --output-directory debian-package --orig path/to/quick-lint-js-2.5.0.tar.gz --sign`
+   `./dist/debian/package.sh --output-directory debian-package --orig path/to/quick-lint-js-2.8.0.tar.gz --sign`
    * NOTE: `package.sh` will use the `debian` sources from your checkout
      (`./dist/debian/debian/`), not from the signed release tarball.
 3. Upload the package: `dput mentors debian-package/quick-lint-js_2.4.2-1_source.changes`

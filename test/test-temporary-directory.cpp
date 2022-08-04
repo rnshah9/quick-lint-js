@@ -1,15 +1,20 @@
 // Copyright (C) 2020  Matthew "strager" Glazar
 // See end of file for extended copyright information.
 
+#if defined(__EMSCRIPTEN__)
+// No filesystem on web.
+#else
+
 #include <cerrno>
 #include <cstring>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <quick-lint-js/file-matcher.h>
-#include <quick-lint-js/file-path.h>
-#include <quick-lint-js/file.h>
+#include <quick-lint-js/filesystem-test.h>
+#include <quick-lint-js/io/file-path.h>
+#include <quick-lint-js/io/file.h>
+#include <quick-lint-js/io/temporary-directory.h>
 #include <quick-lint-js/permissions.h>
-#include <quick-lint-js/temporary-directory.h>
 #include <string>
 
 #if QLJS_HAVE_UNISTD_H
@@ -136,6 +141,8 @@ TEST(test_temporary_directory,
 }
 }
 }
+
+#endif
 
 // quick-lint-js finds bugs in JavaScript programs.
 // Copyright (C) 2020  Matthew "strager" Glazar

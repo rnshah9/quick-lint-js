@@ -3,177 +3,20 @@
 
 import assert from "assert";
 import child_process from "child_process";
-import esbuild from "esbuild-wasm";
-import fs from "fs";
-import mime from "mime";
 import path from "path";
 import url from "url";
 
 let __filename = url.fileURLToPath(import.meta.url);
 let __dirname = path.dirname(__filename);
 
-export class Router {
-  constructor({ esbuildBundles, htmlRedirects, wwwRootPath }) {
-    this._esbuildBundles = esbuildBundles;
-    this._htmlRedirects = htmlRedirects;
-    this._wwwRootPath = wwwRootPath;
-  }
-
-  get esbuildBundles() {
-    return this._esbuildBundles;
-  }
-
-  get htmlRedirects() {
-    return this._htmlRedirects;
-  }
-
-  get wwwRootPath() {
-    return this._wwwRootPath;
-  }
-
-  async classifyDirectoryAsync(directoryPath) {
-    if (isHiddenPath(directoryPath)) {
-      return { type: "does-not-exist" };
-    }
-
-    let routerDirectoryRelativePath = path.dirname(directoryPath);
-    let routerScriptRelativePath = path.join(
-      routerDirectoryRelativePath,
-      "index.mjs"
-    );
-    let haveIndexEJSHTML = await isFileReadableAsync(
-      path.join(this._wwwRootPath, directoryPath, "index.ejs.html")
-    );
-    let haveParentIndexMJS = await isFileReadableAsync(
-      path.join(this._wwwRootPath, routerScriptRelativePath)
-    );
-    let haveIndexHTML = await isFileReadableAsync(
-      path.join(this._wwwRootPath, directoryPath, "index.html")
-    );
-    if (haveIndexEJSHTML + haveIndexHTML + haveParentIndexMJS > 1) {
-      return { type: "ambiguous" };
-    } else if (haveIndexHTML) {
-      return {
-        type: "copy",
-        path: path.join(directoryPath, "index.html"),
-      };
-    } else if (haveIndexEJSHTML) {
-      return {
-        type: "build-ejs",
-        path: path.join(directoryPath, "index.ejs.html"),
-      };
-    } else if (haveParentIndexMJS) {
-      return {
-        type: "routed",
-        routerScript: routerScriptRelativePath,
-        routerDirectory: routerDirectoryRelativePath,
-      };
-    } else {
-      return { type: "does-not-exist" };
-    }
-  }
-
-  async classifyDirectoryRouteAsync(urlPath) {
-    if (!urlPath.startsWith("/")) {
-      throw new Error(`Invalid URL path: ${urlPath}`);
-    }
-    if (!urlPath.endsWith("/")) {
-      throw new Error(`Invalid URL path: ${urlPath}`);
-    }
-    return await this.classifyDirectoryAsync(urlPath.replace(/^\//, ""));
-  }
-
-  async classifyFileAsync(filePath) {
-    return await this.classifyFileRouteAsync("/" + filePath);
-  }
-
-  // Returned .type:
-  //
-  // .type === "missing": 404 Not Found
-  // * .why === "broken-symlink": the file exists but cannot be read
-  // * .why === "does-not-exist": the file does not exist
-  // * .why === "ignored": the file might exist but shouldn't be used
-  // * .why === "unreadable": the file exists but cannot be read
-  // * .why === "unknown-extension": the file exists but content-type cannot be
-  //                                 determined
-  //
-  // .type === "static": 200 OK
-  // * .contentType: String content-type
-  //
-  // .type === "esbuild": 200 OK
-  // * .esbuildConfig: Object to give to esbuild.build
-  //
-  // .type === "redirect": 200 OK
-  // * .redirectTargetURL: String relative URL
-  async classifyFileRouteAsync(urlPath) {
-    if (Object.prototype.hasOwnProperty.call(this._htmlRedirects, urlPath)) {
-      return {
-        type: "redirect",
-        redirectTargetURL: this._htmlRedirects[urlPath],
-      };
-    }
-    if (Object.prototype.hasOwnProperty.call(this._esbuildBundles, urlPath)) {
-      return {
-        type: "esbuild",
-        esbuildConfig: this._esbuildBundles[urlPath],
-      };
-    }
-
-    if (path.basename(urlPath) === ".htaccess") {
-      return { type: "forbidden", why: "server-config" };
-    }
-    if (path.basename(urlPath) === "index.mjs") {
-      return { type: "index-script" };
-    }
-
-    if (isHiddenPath(urlPath)) {
-      return { type: "missing", why: "ignored" };
-    }
-    let readabilityError = await checkFileReadabilityAsync(
-      path.join(this._wwwRootPath, urlPath)
-    );
-    if (readabilityError !== null) {
-      return { type: "missing", why: readabilityError };
-    }
-
-    let contentType = mime.getType(urlPath);
-    if (contentType === null) {
-      return { type: "missing", why: "unknown-extension" };
-    }
-    let ignoredContentTypes = [
-      // Don't serve index.html directly. Caller must request the containing
-      // directory instead.
-      "text/html",
-
-      // Don't serve README files.
-      "text/markdown",
-    ];
-    if (ignoredContentTypes.includes(contentType)) {
-      return { type: "missing", why: "ignored" };
-    }
-    return { type: "static", contentType: contentType };
-  }
-
-  async renderEJSFileAsync(ejsFilePath, { currentURI }) {
-    let childProcess = await renderEJSChildProcessPool.takeAsync();
-    try {
-      let page = await childProcess.renderAsync({ currentURI, ejsFilePath });
-      let pagePostProcess = page.replace(/<script>\s*\/\/\s*<\/script>/g, "");
-      return pagePostProcess;
-    } finally {
-      renderEJSChildProcessPool.recycle(childProcess);
-    }
-  }
-
-  async runESBuildAsync(esbuildConfig, outputPath) {
-    await esbuild.build({
-      ...esbuildConfig,
-      bundle: true,
-      entryPoints: esbuildConfig.entryPoints.map((uri) =>
-        path.join(this._wwwRootPath, uri)
-      ),
-      outfile: outputPath,
-    });
+export async function renderEJSFileAsync(ejsFilePath, { currentURI }) {
+  let childProcess = await renderEJSChildProcessPool.takeAsync();
+  try {
+    let page = await childProcess.renderAsync({ currentURI, ejsFilePath });
+    let pagePostProcess = page.replace(/<script>\s*\/\/\s*<\/script>/g, "");
+    return pagePostProcess;
+  } finally {
+    renderEJSChildProcessPool.recycle(childProcess);
   }
 }
 
@@ -270,90 +113,6 @@ class RenderEJSChildProcessPool {
 }
 
 let renderEJSChildProcessPool = new RenderEJSChildProcessPool();
-
-export function makeHTMLRedirect(redirectFrom, redirectTo) {
-  return `<!DOCTYPE html>
-<html>
-  <head>
-    <!-- ${redirectFrom} is an old link. Redirect users to ${redirectTo} instead. -->
-    <meta charset="utf-8" />
-    <link rel="canonical" href="${redirectTo}" />
-    <meta http-equiv="refresh" content="0; url=${redirectTo}" />
-  </head>
-  <body>
-    <p>
-      This page has moved.
-      <a href="${redirectTo}">Click here to go to the new location.</a>
-    </p>
-  </body>
-</html>
-`;
-}
-
-export function isHiddenPath(p) {
-  return pathParts(p).some(
-    (part) => part === "node_modules" || part.startsWith(".")
-  );
-}
-
-function pathParts(p) {
-  let parts = [];
-  for (;;) {
-    let dirname = path.dirname(p);
-    if (dirname === p) {
-      break;
-    }
-    parts.push(path.basename(p));
-    p = dirname;
-  }
-  parts.reverse();
-  return parts;
-}
-
-async function isFileReadableAsync(path) {
-  try {
-    await fs.promises.access(path, fs.constants.R_OK);
-    return true;
-  } catch (error) {
-    if (error.syscall !== "access") {
-      throw error;
-    }
-    return false;
-  }
-}
-
-async function checkFileReadabilityAsync(path) {
-  // The order of checks here is important.
-  //
-  // * Check lstat before stat to distinguish between symlink-doesn't-exist and
-  //   symlink-target-doesn't-exist.
-  // * Check stat before isFileReadableAsync, because isFileReadableAsync
-  //   returns true on Windows when the symlink target doesn't exist.
-
-  try {
-    await fs.promises.lstat(path);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return "does-not-exist";
-    }
-    throw error;
-  }
-
-  try {
-    await fs.promises.stat(path);
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return "broken-symlink";
-    }
-    throw error;
-  }
-
-  if (await isFileReadableAsync(path)) {
-    return null;
-  }
-
-  return "unreadable";
-}
 
 // quick-lint-js finds bugs in JavaScript programs.
 // Copyright (C) 2020  Matthew "strager" Glazar

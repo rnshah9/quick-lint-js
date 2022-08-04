@@ -4,11 +4,12 @@
 #include <array>
 #include <cstring>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
 #include <quick-lint-js/characters.h>
-#include <quick-lint-js/lsp-location.h>
-#include <quick-lint-js/narrow-cast.h>
-#include <quick-lint-js/padded-string.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/lsp/lsp-location.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/util/algorithm.h>
+#include <quick-lint-js/util/narrow-cast.h>
 #include <vector>
 
 namespace quick_lint_js {
@@ -103,7 +104,7 @@ TEST(test_lsp_location, position_backwards) {
       actual_positions.push_back(l.position(&code[i]));
     }
   }
-  std::reverse(actual_positions.begin(), actual_positions.end());
+  reverse(actual_positions);
 
   EXPECT_EQ(actual_positions, expected_positions);
 }
@@ -336,6 +337,7 @@ TEST(test_lsp_location, add_characters_within_line) {
           .end = {.line = 1, .character = 7},
       },
       u8"xxx ", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -352,6 +354,7 @@ TEST(test_lsp_location, remove_characters_within_line) {
           .end = {.line = 1, .character = 7 + 7},
       },
       u8"", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -371,6 +374,7 @@ TEST(test_lsp_location, add_newline_within_line) {
             .end = {.line = 1, .character = 6},
         },
         line_terminator, &updated_code);
+    locator.validate_caches_debug();
 
     check_positions_against_reference_locator(locator, &updated_code);
   }
@@ -391,6 +395,7 @@ TEST(test_lsp_location, delete_newline) {
             .end = {.line = 2, .character = 0},
         },
         u8"", &updated_code);
+    locator.validate_caches_debug();
 
     check_positions_against_reference_locator(locator, &updated_code);
   }
@@ -408,6 +413,7 @@ TEST(test_lsp_location, replace_newline_and_text_with_newline) {
           .end = {.line = 2, .character = 5},
       },
       u8"x\ny", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -424,6 +430,7 @@ TEST(test_lsp_location, append_line_with_out_of_range_character) {
           .end = {.line = 1, .character = 200},
       },
       u8" extended", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -439,6 +446,7 @@ TEST(test_lsp_location, replace_line_with_out_of_range_line) {
           .end = {.line = 3, .character = 0},
       },
       u8"last line", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -454,6 +462,7 @@ TEST(test_lsp_location, change_ascii_line_into_non_ascii_line) {
           .end = {.line = 1, .character = 3},
       },
       u8"\u00e7", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -469,6 +478,7 @@ TEST(test_lsp_location, split_ascii_line_into_non_ascii_line_and_ascii_line) {
           .end = {.line = 1, .character = 3},
       },
       u8"\u00e7\n", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -484,6 +494,7 @@ TEST(test_lsp_location, split_ascii_line_into_ascii_line_and_non_ascii_line) {
           .end = {.line = 1, .character = 3},
       },
       u8"\n\u00e7", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -500,6 +511,7 @@ TEST(test_lsp_location,
           .end = {.line = 1, .character = 2},
       },
       u8"\n", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }
@@ -516,6 +528,39 @@ TEST(test_lsp_location,
           .end = {.line = 1, .character = 3},
       },
       u8"\n", &updated_code);
+  locator.validate_caches_debug();
+
+  check_positions_against_reference_locator(locator, &updated_code);
+}
+
+TEST(test_lsp_location, join_non_ascii_and_ascii_line) {
+  padded_string original_code(u8"first\nse\u00e7ond\nthird"_sv);
+  padded_string updated_code(u8"first\nse\u00e7ondthird"_sv);
+
+  lsp_locator locator(&original_code);
+  locator.replace_text(
+      lsp_range{
+          .start = {.line = 1, .character = 6},
+          .end = {.line = 2, .character = 0},
+      },
+      u8"", &updated_code);
+  locator.validate_caches_debug();
+
+  check_positions_against_reference_locator(locator, &updated_code);
+}
+
+TEST(test_lsp_location, join_ascii_and_non_ascii_line) {
+  padded_string original_code(u8"first\nsecond\nth\u00edrd"_sv);
+  padded_string updated_code(u8"first\nsecondth\u00edrd"_sv);
+
+  lsp_locator locator(&original_code);
+  locator.replace_text(
+      lsp_range{
+          .start = {.line = 1, .character = 6},
+          .end = {.line = 2, .character = 0},
+      },
+      u8"", &updated_code);
+  locator.validate_caches_debug();
 
   check_positions_against_reference_locator(locator, &updated_code);
 }

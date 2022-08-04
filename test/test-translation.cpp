@@ -3,14 +3,14 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/diag-reporter.h>
-#include <quick-lint-js/diagnostic-formatter.h>
-#include <quick-lint-js/diagnostic-types.h>
-#include <quick-lint-js/diagnostic.h>
+#include <quick-lint-js/fe/diag-reporter.h>
+#include <quick-lint-js/fe/diagnostic-formatter.h>
+#include <quick-lint-js/fe/diagnostic-types.h>
+#include <quick-lint-js/fe/diagnostic.h>
+#include <quick-lint-js/fe/token.h>
+#include <quick-lint-js/i18n/translation.h>
+#include <quick-lint-js/port/char8.h>
 #include <quick-lint-js/test-translation-table-generated.h>
-#include <quick-lint-js/token.h>
-#include <quick-lint-js/translation.h>
 #include <string>
 #include <vector>
 
@@ -24,8 +24,7 @@ class basic_text_diag_formatter;
 class basic_text_diag_formatter
     : public diagnostic_formatter<basic_text_diag_formatter> {
  public:
-  explicit basic_text_diag_formatter(basic_text_diag_reporter *reporter)
-      : reporter_(reporter) {}
+  explicit basic_text_diag_formatter(basic_text_diag_reporter *reporter);
 
   void write_before_message([[maybe_unused]] std::string_view code,
                             diagnostic_severity, const source_code_span &) {}
@@ -45,7 +44,7 @@ class basic_text_diag_formatter
 
 class basic_text_diag_reporter final : public diag_reporter {
  public:
-  explicit basic_text_diag_reporter() = default;
+  explicit basic_text_diag_reporter(translator t) : translator_(t) {}
 
   std::vector<string8> messages() { return this->messages_; }
 
@@ -56,9 +55,15 @@ class basic_text_diag_reporter final : public diag_reporter {
 
  private:
   std::vector<string8> messages_;
+  translator translator_;
 
   friend basic_text_diag_formatter;
 };
+
+basic_text_diag_formatter::basic_text_diag_formatter(
+    basic_text_diag_reporter *reporter)
+    : diagnostic_formatter<basic_text_diag_formatter>(reporter->translator_),
+      reporter_(reporter) {}
 
 void basic_text_diag_formatter::write_after_message(
     [[maybe_unused]] std::string_view code, diagnostic_severity,
@@ -71,8 +76,6 @@ class test_translation : public ::testing::Test {
   void TearDown() override { initialize_translations_from_locale("C"); }
 
  protected:
-  basic_text_diag_reporter reporter;
-
   source_code_span dummy_span() {
     static const char8 hello[] = u8"hello";
     return source_code_span(&hello[0], &hello[5]);
@@ -80,15 +83,19 @@ class test_translation : public ::testing::Test {
 };
 
 TEST_F(test_translation, c_language_does_not_translate_diagnostics) {
-  initialize_translations_from_locale("C");
-  this->reporter.report(diag_unexpected_hash_character{this->dummy_span()});
-  EXPECT_THAT(this->reporter.messages(), ElementsAre(u8"unexpected '#'"));
+  translator t;
+  t.use_messages_from_locale("C");
+  basic_text_diag_reporter reporter(t);
+  reporter.report(diag_unexpected_hash_character{this->dummy_span()});
+  EXPECT_THAT(reporter.messages(), ElementsAre(u8"unexpected '#'"));
 }
 
-TEST_F(test_translation, english_loud_language_upper_cases_base) {
-  initialize_translations_from_locale("en.utf8@loud");
-  this->reporter.report(diag_unexpected_hash_character{this->dummy_span()});
-  EXPECT_THAT(this->reporter.messages(), ElementsAre(u8"UNEXPECTED '#'"));
+TEST_F(test_translation, english_snarky_translates) {
+  translator t;
+  t.use_messages_from_locale("en_US.utf8@snarky");
+  basic_text_diag_reporter reporter(t);
+  reporter.report(diag_unexpected_hash_character{this->dummy_span()});
+  EXPECT_THAT(reporter.messages(), ElementsAre(u8"#unexpected"));
 }
 
 TEST_F(test_translation, full_translation_table) {
@@ -96,7 +103,7 @@ TEST_F(test_translation, full_translation_table) {
        locale_index < std::size(test_locale_names); ++locale_index) {
     const char *locale_name = test_locale_names[locale_index];
     SCOPED_TRACE(locale_name);
-    translatable_messages messages;
+    translator messages;
     if (*locale_name == '\0') {
       messages.use_messages_from_source_code();
     } else {
@@ -106,7 +113,7 @@ TEST_F(test_translation, full_translation_table) {
     for (const translated_string &test_case : test_translation_table) {
       ASSERT_TRUE(test_case.translatable.valid());
       EXPECT_EQ(messages.translate(test_case.translatable),
-                to_string_view(test_case.expected_per_locale[locale_index]));
+                string8_view(test_case.expected_per_locale[locale_index]));
     }
   }
 }

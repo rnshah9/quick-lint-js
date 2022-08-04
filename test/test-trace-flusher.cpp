@@ -1,24 +1,28 @@
 // Copyright (C) 2020  Matthew "strager" Glazar
 // See end of file for extended copyright information.
 
+#if defined(__EMSCRIPTEN__)
+// No filesystem on web.
+#else
+
 #include <chrono>
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <optional>
-#include <quick-lint-js/async-byte-queue.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/file-handle.h>
-#include <quick-lint-js/file.h>
+#include <quick-lint-js/container/async-byte-queue.h>
 #include <quick-lint-js/filesystem-test.h>
-#include <quick-lint-js/have.h>
-#include <quick-lint-js/log.h>
-#include <quick-lint-js/thread.h>
-#include <quick-lint-js/trace-flusher.h>
-#include <quick-lint-js/trace-metadata.h>
+#include <quick-lint-js/io/file-handle.h>
+#include <quick-lint-js/io/file.h>
+#include <quick-lint-js/logging/log.h>
+#include <quick-lint-js/logging/trace-flusher.h>
+#include <quick-lint-js/logging/trace-metadata.h>
+#include <quick-lint-js/logging/trace-writer.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/port/have.h>
+#include <quick-lint-js/port/thread.h>
+#include <quick-lint-js/port/warning.h>
 #include <quick-lint-js/trace-stream-reader-mock.h>
-#include <quick-lint-js/trace-writer.h>
 #include <quick-lint-js/version.h>
-#include <quick-lint-js/warning.h>
 #include <string>
 #include <thread>
 
@@ -67,6 +71,8 @@ struct trace_init_event_spy : trace_stream_event_visitor {
       const vscode_document_changed_event&) override {}
   void visit_vscode_document_sync_event(
       const vscode_document_sync_event&) override {}
+  void visit_lsp_client_to_server_message_event(
+      const lsp_client_to_server_message_event&) override {}
 
   std::vector<std::string> init_versions;
 };
@@ -82,6 +88,14 @@ TEST_F(test_trace_flusher, enabling_creates_metadata_file) {
   EXPECT_THAT(to_string(metadata_file->string_view()),
               ::testing::StartsWith("/* CTF 1.8"))
       << "TSDL specification: https://diamon.org/ctf/#spec7.1";
+}
+
+TEST_F(test_trace_flusher, enabling_enables) {
+  trace_flusher flusher;
+  EXPECT_FALSE(flusher.is_enabled());
+  auto result = flusher.enable_for_directory(this->trace_dir);
+  ASSERT_TRUE(result.ok()) << result.error_to_string();
+  EXPECT_TRUE(flusher.is_enabled());
 }
 
 TEST_F(test_trace_flusher, enabling_fails_if_directory_is_missing) {
@@ -221,6 +235,16 @@ TEST_F(test_trace_flusher, cannot_write_events_after_enabling_then_disabling) {
 
   trace_writer* writer = flusher.trace_writer_for_current_thread();
   EXPECT_FALSE(writer);
+}
+
+TEST_F(test_trace_flusher, disabling_disables) {
+  trace_flusher flusher;
+  auto result = flusher.enable_for_directory(this->trace_dir);
+  ASSERT_TRUE(result.ok()) << result.error_to_string();
+  ASSERT_TRUE(flusher.is_enabled());
+
+  flusher.disable();
+  EXPECT_FALSE(flusher.is_enabled());
 }
 
 TEST_F(test_trace_flusher,
@@ -427,6 +451,8 @@ TEST_F(test_trace_flusher, flushing_disabled_does_nothing) {
 }
 }
 }
+
+#endif
 
 // quick-lint-js finds bugs in JavaScript programs.
 // Copyright (C) 2020  Matthew "strager" Glazar

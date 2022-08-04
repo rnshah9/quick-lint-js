@@ -2,16 +2,17 @@
 // See end of file for extended copyright information.
 
 #include <benchmark/benchmark.h>
-#include <quick-lint-js/basic-configuration-filesystem.h>
-#include <quick-lint-js/configuration-loader.h>
-#include <quick-lint-js/file.h>
-#include <quick-lint-js/narrow-cast.h>
-#include <quick-lint-js/options.h>
-#include <quick-lint-js/temporary-directory.h>
+#include <quick-lint-js/cli/options.h>
+#include <quick-lint-js/configuration/basic-configuration-filesystem.h>
+#include <quick-lint-js/configuration/configuration-loader.h>
+#include <quick-lint-js/io/file.h>
+#include <quick-lint-js/io/temporary-directory.h>
+#include <quick-lint-js/util/narrow-cast.h>
 #include <string>
 
 namespace quick_lint_js {
 namespace {
+#if !defined(__EMSCRIPTEN__)  // TODO(#800): Support Emscripten.
 void benchmark_no_config_file(::benchmark::State& state) {
   int extra_depth = narrow_cast<int>(state.range(0));
   std::string temp_dir = make_temporary_directory();
@@ -38,6 +39,7 @@ BENCHMARK(benchmark_no_config_file)
     ->Arg(32)
     ->Arg(48)
     ->Arg(64);
+#endif
 }  // namespace
 }  // namespace quick_lint_js
 

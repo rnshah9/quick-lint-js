@@ -5,15 +5,15 @@
 #define QUICK_LINT_JS_C_API_DIAG_REPORTER_H
 
 #include <cstdint>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/diag-reporter.h>
-#include <quick-lint-js/diagnostic-formatter.h>
-#include <quick-lint-js/diagnostic-types.h>
-#include <quick-lint-js/diagnostic.h>
-#include <quick-lint-js/monotonic-allocator.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/token.h>
-#include <quick-lint-js/warning.h>
+#include <quick-lint-js/container/monotonic-allocator.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/fe/diag-reporter.h>
+#include <quick-lint-js/fe/diagnostic-formatter.h>
+#include <quick-lint-js/fe/diagnostic-types.h>
+#include <quick-lint-js/fe/diagnostic.h>
+#include <quick-lint-js/fe/token.h>
+#include <quick-lint-js/port/char8.h>
+#include <quick-lint-js/port/warning.h>
 #include <vector>
 
 struct qljs_web_demo_diagnostic;
@@ -31,7 +31,10 @@ class c_api_diag_reporter final : public diag_reporter {
   explicit c_api_diag_reporter();
 
   void set_input(padded_string_view input, const Locator *);
+  // Does not reset translator.
   void reset();
+
+  void set_translator(translator);
 
   const Diagnostic *get_diagnostics();
 
@@ -40,6 +43,7 @@ class c_api_diag_reporter final : public diag_reporter {
  private:
   char8 *allocate_c_string(string8_view);
 
+  translator translator_;
   std::vector<Diagnostic> diagnostics_;
   const Locator *locator_;
   const char8 *input_;

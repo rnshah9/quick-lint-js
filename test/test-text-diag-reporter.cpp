@@ -3,13 +3,13 @@
 
 #include <cstring>
 #include <gtest/gtest.h>
-#include <quick-lint-js/char8.h>
-#include <quick-lint-js/cli-location.h>
-#include <quick-lint-js/location.h>
-#include <quick-lint-js/options.h>
-#include <quick-lint-js/output-stream.h>
-#include <quick-lint-js/padded-string.h>
-#include <quick-lint-js/text-diag-reporter.h>
+#include <quick-lint-js/cli/cli-location.h>
+#include <quick-lint-js/cli/options.h>
+#include <quick-lint-js/cli/text-diag-reporter.h>
+#include <quick-lint-js/container/padded-string.h>
+#include <quick-lint-js/fe/source-code-span.h>
+#include <quick-lint-js/io/output-stream.h>
+#include <quick-lint-js/port/char8.h>
 #include <string>
 
 using namespace std::literals::string_literals;
@@ -19,7 +19,8 @@ namespace {
 class test_text_diag_reporter : public ::testing::Test {
  protected:
   text_diag_reporter make_reporter() {
-    return text_diag_reporter(&this->stream_, /*escape_errors=*/false);
+    return text_diag_reporter(translator(), &this->stream_,
+                              /*escape_errors=*/false);
   }
 
   text_diag_reporter make_reporter(padded_string_view input) {
@@ -28,7 +29,7 @@ class test_text_diag_reporter : public ::testing::Test {
 
   text_diag_reporter make_reporter(padded_string_view input,
                                    bool escape_errors) {
-    text_diag_reporter reporter(&this->stream_,
+    text_diag_reporter reporter(translator(), &this->stream_,
                                 /*escape_errors=*/escape_errors);
     reporter.set_source(input, this->file_path_);
     return reporter;
@@ -55,12 +56,12 @@ TEST_F(test_text_diag_reporter, change_source) {
   padded_string input_1(u8"aaaaaaaa"_sv);
   reporter.set_source(&input_1, /*file_name=*/"hello.js");
   reporter.report(diag_assignment_to_const_global_variable{
-      identifier(source_code_span(&input_1[4 - 1], &input_1[4 - 1]))});
+      identifier(source_code_span::unit(&input_1[4 - 1]))});
 
   padded_string input_2(u8"bbbbbbbb"_sv);
   reporter.set_source(&input_2, /*file_name=*/"world.js");
   reporter.report(diag_assignment_to_const_global_variable{
-      identifier(source_code_span(&input_2[5 - 1], &input_2[5 - 1]))});
+      identifier(source_code_span::unit(&input_2[5 - 1]))});
 
   EXPECT_EQ(
       this->get_output(),
