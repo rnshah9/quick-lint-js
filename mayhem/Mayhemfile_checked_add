@@ -1,0 +1,5 @@
+project: quick-lint-js
+target: checked-add
+
+cmds:
+  - cmd: /fuzz_checked_add

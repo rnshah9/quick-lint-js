@@ -51,7 +51,8 @@ jobs:
       fail-fast: false
       matrix:
         mayhemfile:
-          - mayhem/Mayhemfile
+          - mayhem/Mayhemfile_checked_add
+          - mayhem/Mayhemfile_quick_lint_js
 
     steps:
       - uses: actions/checkout@v2
